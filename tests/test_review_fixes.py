@@ -73,9 +73,11 @@ class EofStops(unittest.TestCase):
     def test_no_input_stops_fast(self):
         sb = Sandbox()
         self.addCleanup(sb.cleanup)
-        for answers in ("", "이름\nslug\n\n대표님\norchestrator\nmain\nweb\n\n\n\nmain\n\n3\n\n\n\n"):
+        full = "\n".join(["이름", "slug", "", "대표님", "1", "orchestrator", "main",       # --detail 프로젝트 · 하네스
+                           "web", "1", "", "", "main", "", "3", "", "", ""]) + "\n"     # 저장소 하나 뒤 다음 키에서 입력 끊김
+        for args, answers in ((("run",), ""), (("run", "--detail"), ""), (("run", "--detail"), full), (("run",), "이름\n")):
             t = time.time()
-            r = sb.bootstrap("run", "--target", str(sb.projects / "o"), "--offline", input_text=answers)
+            r = sb.bootstrap(*args, "--target", str(sb.projects / "o"), "--offline", input_text=answers)
             self.assertLess(time.time() - t, 3.0 + 2.0, "EOF 에서 반복 질문이 멈추지 않았다")  # 파이썬 시작 여유 2초
             self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
             self.assertIn("대화형 입력이 없다", r.stderr)

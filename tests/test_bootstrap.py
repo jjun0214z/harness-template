@@ -184,7 +184,7 @@ class Interactive(unittest.TestCase):
             "y", "n", "n", "y",                                                   # 3 채울 자리 틀
             "3", "n",                                                             # 4 엔진 둘 다 · Orca 아니오
         ]) + "\n"
-        r = sb.bootstrap("run", "--target", str(target), "--offline", "--skip-install", input_text=answers)
+        r = sb.bootstrap("run", "--detail", "--target", str(target), "--offline", "--skip-install", input_text=answers)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         cfg = json.loads((target / "harness.json").read_text(encoding="utf-8"))
         self.assertEqual(cfg["project"]["owner_title"], "팀장님")

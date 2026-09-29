@@ -1,6 +1,7 @@
 # 하네스 템플릿 한 줄 설치(Windows PowerShell). 막 산 컴퓨터에서도 돈다: 파이썬보다 먼저 도는 순수 PowerShell 이다.
 #
 #   irm https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1 | iex
+#   (붙여 넣다 줄이 끊기면 두 줄로) $u = "https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1"  다음 줄  irm $u | iex
 #   (무인) $env:HARNESS_YES='1'; irm .../install.ps1 | iex
 #
 # 순서: 감지 표(도구 · 찾은 버전 · 할 일) → 한 번 동의 → winget 확인 · git · python · node 22

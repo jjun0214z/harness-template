@@ -16,11 +16,12 @@ python 명령은 이 기기에 있는 것을 쓴다(mac · Linux `python3`, Wind
   관리자 암호 · 개발자 도구 설치 창처럼 사람 손이 필요한 것은 `! <명령>` 으로 사용자가 직접 치게 안내한다.
 - 이미 만든 하네스 폴더(루트에 `harness.json`)면 새로 묻지 않는다. 새 기기면 5번, 템플릿 갱신이면 7번.
 
-## 1. 네 묶음을 묻는다 (한 번에 한 묶음, 선택지가 있으면 선택지로)
-1. 프로젝트: 이름 · 영문 슬러그(플러그인 이름) · GitHub 조직(없어도 된다: 로컬만 만든다) · 결정권자를 부르는 호칭 · 하네스 저장소 폴더 이름(기본 orchestrator)
-2. 저장소마다: 키(영문, 작업자 이름 `<키>-worker`) · 폴더 · **새로 만들지(기본) / 기존 원격을 받을지** · 기준 브랜치 · 한 줄 설명 · 스택(node/pnpm · python · 없음) · 브랜치별 배포 의미 · push 때 물을 브랜치 · 검사 명령(빈칸이면 스택 기본값)
-3. 규칙 스킬: 절차 뼈대 5개는 항상. 채울 자리 틀(code-convention · security-privacy · operations · design) 중 넣을 것
-4. 엔진: Claude · Codex · 둘 다. Orca 를 쓸지(Windows 는 Orca 스크립트에 Git Bash 가 필요하다)
+## 1. 질문은 2개만 (기본)
+1. 프로젝트 이름(기본값 = 사용자가 있는 폴더 이름)
+2. 엔진: Claude · Codex · 둘 다(기본값 = 설치 · 로그인돼 있는 것, 둘 다면 Claude)
+그다음 요약을 보여 주고 확인받는다: 「여기에 만듭니다: <경로> · 엔진 … · 저장소는 나중에(add-repo) · Orca(있으면 사용, 없으면 설치 제안)」.
+경로 규칙: 폴더 이름이 프로젝트 이름과 같거나 폴더가 비어 있으면 그 폴더 자체, 아니면 `<폴더>/<슬러그>`.
+나머지는 기본값(슬러그 = 이름에서, GitHub 없음, 호칭 대표님, 하네스 새로 만들기, 저장소 0개, 스킬 틀 전부). 사용자가 원할 때만 `--detail` 의 전체 질문(GitHub · 호칭 · 하네스 연결 · 저장소 · 스킬 · Orca)을 한다.
 
 ## 2. 설정 파일을 쓴다
 답을 `harness.json` 으로 적는다(형식: 템플릿 `examples/harness.example.json`). 사용자에게 보여 주고 확인받는다.
@@ -32,7 +33,7 @@ python 명령은 이 기기에 있는 것을 쓴다(mac · Linux `python3`, Wind
 `PY harness/scripts/bootstrap.py tools --config harness.json` 표(도구 · 찾은 버전 · 할 일)를 보여 준다. 동의를 받으면 5번에 `--yes` 를 붙인다.
 
 ## 5. 끝까지 실행
-`PY harness/scripts/bootstrap.py run --config harness.json --root <프로젝트 루트> --non-interactive [--yes] [--create-github]`
+`PY harness/scripts/bootstrap.py run --config harness.json --root <프로젝트 루트> --non-interactive [--yes] [--no-orca] [--create-github]`
 - 프로젝트 루트 기본값은 **사용자가 명령을 실행한 폴더 아래 `<슬러그>/`** 다. 사용자에게 「여기에 만듭니다: <경로>」를 보여 주고 확인받은 뒤 `--root` 로 넘긴다. 그 안에 하네스(`<하네스 폴더>/`)와 새 저장소를 만든다.
 - 저장소는 새로 만든다(`git init` · 뼈대 · 첫 커밋). 이미 있는 폴더는 덮지 않는다.
 - `--create-github` 은 gh 로그인이 있을 때만 비공개 원격 · 라벨을 만든다. 사용자에게 먼저 묻는다. 없으면 「나중에 할 일」에 연결 명령이 남는다.
@@ -42,6 +43,12 @@ python 명령은 이 기기에 있는 것을 쓴다(mac · Linux `python3`, Wind
 
 ## 7. 템플릿 갱신
 하네스 폴더에서 `PY harness/scripts/bootstrap.py update`. 바뀐 파일을 `git diff` 로 보여 주고 경로를 명시해 커밋한다.
+
+## 7-1. 저장소 추가 (「저장소 추가해」「레포 연결해」)
+하네스 폴더에서 저장소 하나를 대화로 물어(키 · 새로 만들기 / 원격 받기 / 이 컴퓨터 폴더 연결 · 폴더 · 브랜치 · 스택 …) JSON 조각으로 적고:
+`PY harness/scripts/bootstrap.py add-repo --repo <조각.json> [--create-github]`
+harness.json 에 더하고, 그 저장소만 준비(새로 만들기 · 받기 · 연결) → 작업자 · 저장소 지도 생성 → 그 저장소에만 플러그인 · 신뢰 · Orca 등록을 한다. 같은 키로 다시 불러도 안전하다.
+사용자가 터미널에서 직접 하려면 `PY harness/scripts/bootstrap.py add-repo` (대화형). 끝나면 바뀐 하네스 파일을 경로를 명시해 커밋한다.
 
 ## 하지 말 것
 - 사용자 동의 없이 도구 설치 · GitHub 저장소 생성 · 전역 설정 변경을 하지 않는다.

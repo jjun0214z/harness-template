@@ -24,7 +24,7 @@ description: Git · 커밋 · 브랜치 규칙(저장소별 기준 브랜치 · 
 - `git log --oneline origin/<기준>..<밀 SHA>` 로 내가 미는 커밋만 있는지 잰다. 없거나 · 많거나 · 비면 멈춘다.
 
 ## 6. 브랜치 수명
-- 머지된 원격 브랜치는 그 자리에서 지운다. 작업 공간은 `python3 harness/scripts/cleanup_worktrees.py` 로 치운다.
+- 머지된 원격 브랜치는 그 자리에서 지운다. 작업 공간은 `{{py}} harness/scripts/cleanup_worktrees.py` 로 치운다.
 
 ## 확인 필요
 <!-- 채울 자리: 릴리스 · 핫픽스 · 버전 규칙 -->

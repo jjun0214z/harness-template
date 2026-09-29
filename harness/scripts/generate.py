@@ -45,12 +45,17 @@ def deploy_text(r: dict) -> str:
 
 def context(cfg: dict) -> Dict[str, str]:
     p, h = cfg["project"], cfg["harness_repo"]
+    py = cfg["platform"]["python"]  # 안내 명령의 파이썬(mac · Linux python3, Windows py -3 등)
     owner = p["owner_title"]
     issues = h.get("remote") or f"{h['dir']} 저장소"
     rows = ["| 폴더 | 원격 | 기준 브랜치 | 그 브랜치에 들어가면 | 작업자 |", "| --- | --- | --- | --- | --- |",
             f"| `.` ({h['dir']}) | {h.get('remote') or '-'} | `{h['base_branch']}` | 배포 없음. 하네스 규칙과 실행 장치 | 오케스트레이터 |"]
     for r in cfg["repos"]:
         rows.append(f"| `{hl.repo_ref(r)}` | {r.get('remote') or r.get('url') or '로컬만'} | `{r['base_branch']}` | {md_escape(deploy_text(r))} | `{r['key']}-worker` |")
+    if not cfg["repos"]:
+        rows.append("")
+        rows.append(f"> **코드 저장소가 아직 없다.** 나중에 하네스 폴더에서 `{py} harness/scripts/bootstrap.py add-repo` 로 더한다"
+                    "(새로 만들기 · 원격에서 받기 · 이 컴퓨터의 폴더 연결). 더하면 이 표와 작업자가 생긴다.")
     deploy_rows = ["| 저장소 | 브랜치 | 들어가면 | 승인 |", "| --- | --- | --- | --- |",
                    f"| {h['dir']} (하네스) | `{h['base_branch']}` | 규칙 반영 | 규칙 파일이 바뀌었으면 {owner}께 묻는다(훅이 묻는다) |"]
     for r in cfg["repos"]:
@@ -65,17 +70,17 @@ def context(cfg: dict) -> Dict[str, str]:
         checks.append(f"| {r['dir']} | {' · '.join(f'`{c}`' for c in r['checks']) or '<!-- 채울 자리 -->'} |")
     if hl.orca_on(cfg):
         cleanup = ("Orca 작업자는 작업자 출력의 `bash scripts/orca-finish-worker.sh <dispatch> <워크트리>`, "
-                   "Orca 밖 작업자는 `python3 harness/scripts/finish_worker.py <워크트리>`. "
-                   "오래 남은 작업 공간은 `python3 harness/scripts/cleanup_worktrees.py` 로 미리 보고 `--apply`.")
+                   f"Orca 밖 작업자는 `{py} harness/scripts/finish_worker.py <워크트리>`. "
+                   f"오래 남은 작업 공간은 `{py} harness/scripts/cleanup_worktrees.py` 로 미리 보고 `--apply`.")
     else:
-        cleanup = ("`python3 harness/scripts/finish_worker.py <워크트리>`. "
-                   "오래 남은 작업 공간은 `python3 harness/scripts/cleanup_worktrees.py` 로 미리 보고 `--apply`(원격에 다 들어간 것만 지운다).")
+        cleanup = (f"`{py} harness/scripts/finish_worker.py <워크트리>`. "
+                   f"오래 남은 작업 공간은 `{py} harness/scripts/cleanup_worktrees.py` 로 미리 보고 `--apply`(원격에 다 들어간 것만 지운다).")
     return {
         "project": p["name"], "owner": owner, "slug": p["slug"], "issues_repo": issues,
         "labels": " · ".join(f"`{x}`" for x in cfg["labels"]) + " · `repo:<키>`",
         "repo_table": "\n".join(rows), "deploy_table": "\n".join(deploy_rows), "checks_table": "\n".join(checks),
         "cleanup_line": cleanup, "repo_keys": " | ".join(["harness"] + [r["key"] for r in cfg["repos"]]),
-        "dispatch_table": dispatch_table(cfg), "harness_dir": h["dir"],
+        "dispatch_table": dispatch_table(cfg), "harness_dir": h["dir"], "py": py,
     }
 
 
@@ -143,7 +148,7 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
 
 | 위치 | 역할 |
 | --- | --- |
-| `harness.json` | **설정 원본 한 장.** 저장소 목록 · 엔진 · Orca 여부. 바꾼 뒤 `python3 harness/scripts/generate.py` |
+| `harness.json` | **설정 원본 한 장.** 저장소 목록 · 엔진 · Orca 여부. 바꾼 뒤 `{cfg['platform']['python']} harness/scripts/generate.py`. 저장소 추가는 `{cfg['platform']['python']} harness/scripts/bootstrap.py add-repo` |
 | `CLAUDE.md` · `AGENTS.md` | 공통 지침과 Codex 진입점. `AGENTS.md` 는 이 파일을 읽게만 한다 |
 | 플러그인 `{slug}` (`plugins/{slug}/`) | 모든 저장소와 엔진이 같이 쓰는 스킬 · 작업자 · 안전 훅(push 가드) |
 | `harness/hooks/` | 이 저장소 전용 훅: 규칙 파일 보호 · 원격 하네스 동기화 |

@@ -22,6 +22,8 @@ class ProjectRoot(unittest.TestCase):
         self.addCleanup(self.sb.cleanup)
         self.dev = self.sb.tmp / "dev"
         self.dev.mkdir()
+        # 비어 있지 않은 폴더(이름도 슬러그와 다름) → <폴더>/<슬러그>. 빈 폴더 · 같은 이름은 test_simple 이 본다
+        (self.dev / "다른프로젝트.txt").write_text("x", encoding="utf-8")
 
     def run_boot(self, *extra, cwd=None, **env):
         return self.sb.bootstrap("run", "--config", str(new_config(self.sb)), "--offline", "--non-interactive",
@@ -50,6 +52,7 @@ class ProjectRoot(unittest.TestCase):
     def test_caller_cwd_env_wins(self):
         other = self.sb.tmp / "caller"
         other.mkdir()
+        (other / "x.txt").write_text("x", encoding="utf-8")
         r = self.run_boot(HARNESS_CALLER_CWD=str(other))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue((other / "zero" / "orchestrator" / "harness.json").is_file())
@@ -92,12 +95,12 @@ class ProjectRoot(unittest.TestCase):
         ]) + "\n"
 
     def test_interview_shows_root_and_accepts_enter_or_path(self):
-        r = self.sb.bootstrap("run", "--offline", "--skip-install", input_text=self.answers("loc", ""), cwd=self.dev)
+        r = self.sb.bootstrap("run", "--detail", "--offline", "--skip-install", input_text=self.answers("loc", ""), cwd=self.dev)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn(f"여기에 만듭니다: {(self.dev / 'loc').resolve()}", r.stdout)
         self.assertTrue((self.dev / "loc" / "orchestrator" / "harness.json").is_file())
         custom = self.sb.tmp / "다른곳"
-        r = self.sb.bootstrap("run", "--offline", "--skip-install", input_text=self.answers("loc2", str(custom)), cwd=self.dev)
+        r = self.sb.bootstrap("run", "--detail", "--offline", "--skip-install", input_text=self.answers("loc2", str(custom)), cwd=self.dev)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue((custom / "orchestrator" / "harness.json").is_file())
         self.assertFalse((self.dev / "loc2").exists())
@@ -141,6 +144,7 @@ class InstallKeepsCwd(unittest.TestCase):
     def test_curl_pipe_bash_creates_under_cwd(self):
         dev = self.sb.tmp / "dev"
         dev.mkdir()
+        (dev / "x.txt").write_text("x", encoding="utf-8")
         cfg = new_config(self.sb)
         script = (TEMPLATE / "install.sh").read_text(encoding="utf-8")
         r = subprocess.run(["bash", "-s", "--", "--yes", "--", "run", "--config", str(cfg), "--non-interactive",

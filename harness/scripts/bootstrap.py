@@ -10,6 +10,7 @@ git · python · node 는 install.sh · install.ps1 이 파이썬보다 먼저 �
   tools    도구 표(--yes 면 동의한 것으로 보고 설치)
   generate 생성기만
   update   템플릿 최신본의 엔진(harness/)을 가져와 다시 생성(사람이 채운 부분은 덮지 않는다)
+  add-repo 저장소를 나중에 하나 더한다(셋업 때 저장소 0개여도 된다)
   doctor   점검 표 + 나중에 할 일
 
 두 번 돌려도 안전하다. 사람 손이 필요한 것(로그인 · 관리자 권한)은 멈추고 명령만 안내한다.
@@ -28,6 +29,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from typing import Callable, List, Optional, Tuple
 import urllib.request
 
@@ -105,15 +107,127 @@ def ask_yes(prompt: str, default: bool, reader: Callable[[str], str] = input, on
     return ans in ("y", "yes", "예", "네", "ㅇ")
 
 
+def slugify(text: str) -> str:
+    s = re.sub(r"[^a-z0-9-]", "", text.strip().lower().replace(" ", "-").replace("_", "-"))
+    s = re.sub(r"^[^a-z]+", "", s).strip("-")[:40]
+    return s
+
+
+def default_slug(name: str) -> str:
+    """이름에서 슬러그를 만든다. 한글 이름처럼 영문이 없으면 폴더 이름, 그것도 없으면 project."""
+    return slugify(name) or slugify(caller_base().name) or "project"
+
+
+def ask_key(n: int, reader: Callable[[str], str]) -> Optional[str]:
+    """저장소 키: 영문 소문자로 시작, 소문자 · 숫자 · - 만. 틀리면 다시 묻는다. 빈칸 = 끝."""
+    while True:
+        key = ask(f"저장소 {n} 키(영문 소문자로 시작, 작업자 이름 <키>-worker. 빈칸 = 끝)", "", reader)
+        if not key or hl.REPO_KEY_RE.match(key):
+            return key or None
+        say(f"  「{key}」 는 키로 쓸 수 없다. 영문 소문자로 시작하고 소문자 · 숫자 · - 만 쓴다(예: web, api-server)")
+
+
+def ask_git_path(prompt: str, reader: Callable[[str], str]) -> Path:
+    """연결할 폴더 경로를 받자마자 확인한다: 없으면 다시 묻는다."""
+    while True:
+        raw = ask(prompt, "", reader)
+        path = Path(os.path.expanduser(raw)).resolve() if raw else None
+        if path and path.is_dir():
+            return path
+        say(f"  폴더가 없다: {raw or '(빈칸)'}. 다시 입력한다")
+
+
+def ask_repo(org: str, n: int, reader: Callable[[str], str] = input, detail: bool = True) -> Optional[dict]:
+    """저장소 하나를 묻는다(셋업 · add-repo 공통). 키를 빈칸으로 두면 None.
+    detail=False 면 키 · 방식 · (경로 · 주소) · 스택만 묻고 나머지는 기본값(배포 의미 · push 브랜치 · 검사는 --detail 에서만)."""
+    key = ask_key(n, reader)
+    if not key:
+        return None
+    r = {"key": key}
+    how = ask("  (1) 새로 만들기 (2) 원격 주소에서 받기(clone) (3) 이 컴퓨터에 있는 폴더 연결", "1", reader)
+    if how == "3":
+        r["source"] = "local"
+        while True:
+            local = ask_git_path("  연결할 폴더 경로(다른 위치여도 된다. 옮기지 않는다)", reader)
+            if (local / ".git").exists():
+                break
+            say(f"  git 저장소가 아니다: {local}. 코드 저장소 연결은 git 저장소만 된다. 다시 입력한다")
+        r["path"] = str(local)
+        r["dir"] = local.name
+        if detail:
+            r["remote"] = ask("  GitHub 원격(조직/이름)", hl.github_remote(local), reader)
+            r["base_branch"] = ask("  기준 브랜치(그 저장소의 기본 브랜치)", hl.detect_base_branch(local) or "main", reader)
+        r["connect_files"] = ask_yes("  작업자용 최소 파일(CLAUDE.md · AGENTS.md · .claude/settings.json)을 없는 것만 더할까", False, reader)
+    else:
+        if how == "2":
+            r["source"], r["url"] = "clone", ask("  원격 주소", "", reader)
+        if detail:
+            r["dir"] = ask("  폴더", key, reader)
+            r["remote"] = ask("  GitHub 원격(조직/이름, 없으면 빈칸)", f"{org}/{key}" if org else "", reader)
+            r["base_branch"] = ask("  기준 브랜치", "main", reader)
+    if detail:
+        r["description"] = ask("  한 줄 설명", "", reader)
+    stack = ask("  스택 (1) node/pnpm (2) python (3) 없음", "3", reader)
+    r["stack"] = {"1": "node", "2": "python"}.get(stack, "none")
+    if not detail:
+        return r
+    deploy = {}
+    for pair in filter(None, (s.strip() for s in ask("  배포 의미(브랜치=의미, 쉼표로. 예: develop=dev 배포,main=상용 배포)", "", reader).split(","))):
+        if "=" in pair:
+            b, m = pair.split("=", 1)
+            deploy[b.strip()] = m.strip()
+    r["deploy"] = deploy
+    r["ask_on_push"] = [s.strip() for s in ask("  push 때 물을 브랜치(쉼표로, 없으면 빈칸)", "", reader).split(",") if s.strip()]
+    checks = ask("  검사 명령(쉼표로, 빈칸이면 스택 기본값)", "", reader)
+    if checks:
+        r["checks"] = [s.strip() for s in checks.split(",") if s.strip()]
+    return r
+
+
+def detect_engines(kind: str) -> str:
+    """엔진 기본값: 설치 · 로그인된 것. 둘 다 있으면 Claude. 아무것도 없으면 Claude."""
+    have = {e: hl.find_tool(e, kind, hl.tool_extra_paths(e, kind)) is not None for e in hl.ENGINES}
+    if have["claude"]:
+        return "1"
+    if have["codex"]:
+        return "2"
+    return "1"
+
+
+def simple_interview(kind: str, reader: Callable[[str], str] = input, root_fixed: Optional[Path] = None,
+                     use_orca: bool = True) -> dict:
+    """기본 셋업: 질문 2개(프로젝트 이름 · 엔진) + 요약 확인. 나머지는 기본값(자세히는 --detail)."""
+    cfg = hl.default_config()
+    p = cfg["project"]
+    say("\n하네스 셋업 (질문 2개. 전부 고르려면 --detail)")
+    p["name"] = ask("1) 프로젝트 이름", caller_base().name, reader)
+    p["slug"] = default_slug(p["name"])
+    choice = ask("2) 엔진 (1) Claude (2) Codex (3) 둘 다", detect_engines(kind), reader)
+    cfg["engines"] = {"1": ["claude"], "2": ["codex"], "3": ["claude", "codex"]}.get(choice, ["claude"])
+    # Orca 는 묻지 않는다: 있으면 쓰고, 없으면 도구 표에 「설치(선택)」로 나온다(동의 한 번). --no-orca 로 뺀다
+    installed = hl.find_tool("orca", kind, hl.tool_extra_paths("orca", kind)) is not None
+    cfg["orca"]["enabled"] = use_orca
+    cfg["orca"]["_auto"] = use_orca  # 기본값으로 켠 것: 끝내 설치하지 못하면 Orca 없이 만든다
+    root = root_fixed or project_root(None, cfg)
+    engines = " · ".join({"claude": "Claude", "codex": "Codex"}[e] for e in cfg["engines"])
+    orca = ("Orca 사용" if installed else "Orca 없으면 설치(선택)") if use_orca else "Orca 없음(--no-orca)"
+    ans = ask(f"\n여기에 만듭니다: {root} · 엔진 {engines} · 저장소는 나중에(add-repo) · {orca}\n"
+              "  Enter = 진행 · 다른 경로를 치면 그 폴더에 · n = 그만", "", reader)
+    if ans.lower() in ("n", "no", "아니오"):
+        raise hl.ConfigError("그만뒀다. 전부 고르려면 --detail 로 다시 실행한다")
+    cfg["_root"] = ans if ans else str(root)
+    return hl.normalize(cfg)
+
+
 def interview(kind: str, reader: Callable[[str], str] = input, default_root=None) -> dict:
     """네 묶음 질문 → 설정 dict."""
     cfg = hl.default_config()
     say("\n[1/4] 프로젝트")
     p = cfg["project"]
-    p["name"] = ask("프로젝트 이름", "", reader)
-    p["slug"] = ask("영문 슬러그(플러그인 이름, 소문자 · 숫자 · -)", re.sub(r"[^a-z0-9-]", "", p["name"].lower().replace(" ", "-")) or "myproject", reader)
+    p["name"] = ask("프로젝트 이름", caller_base().name, reader)
+    p["slug"] = ask("영문 슬러그(플러그인 이름, 소문자 · 숫자 · -)", default_slug(p["name"]), reader)
     if default_root is not None:
-        here = default_root(None, {"project": {"slug": p["slug"]}})
+        here = default_root(None, {"project": {"slug": p["slug"]}, "harness_repo": {"dir": "orchestrator"}})
         cfg["_root"] = ask(f"여기에 만듭니다: {here}  (Enter = 그대로, 다른 경로 입력)", str(here), reader)
     p["github_org"] = ask("GitHub 조직 또는 사용자(없으면 빈칸: 로컬만 만든다)", "", reader)
     p["owner_title"] = ask("결정권자를 부르는 호칭", "대표님", reader)
@@ -121,49 +235,26 @@ def interview(kind: str, reader: Callable[[str], str] = input, default_root=None
     how = ask("하네스 저장소: (1) 새로 만들기 (2) 이 컴퓨터에 있는 폴더 연결", "1", reader)
     if how == "2":
         h["source"] = "local"
-        h["path"] = ask("  연결할 하네스 폴더 경로", "", reader)
-        h["base_branch"] = ask("  기준 브랜치", hl.detect_base_branch(Path(os.path.expanduser(h["path"]))) or "main", reader)
+        path = ask_git_path("  연결할 하네스 폴더 경로", reader)
+        if not (path / ".git").exists():
+            if ask_yes(f"  git 저장소가 아니다: {path}. 여기에 git init 해서 하네스로 쓸까요(원래 있던 파일은 커밋에 넣지 않는다)", True, reader):
+                h["git_init"] = True
+            else:
+                raise hl.ConfigError("하네스로 연결할 폴더가 git 저장소가 아니다. git init 하거나 새로 만들기를 고른다")
+        h["path"] = str(path)
+        h["base_branch"] = ask("  기준 브랜치", hl.detect_base_branch(path) or "main", reader)
     else:
         h["dir"] = ask("  하네스 저장소 폴더 이름", "orchestrator", reader)
         h["base_branch"] = ask("  기준 브랜치", "main", reader)
 
     say("\n[2/4] 저장소 (빈 키를 넣으면 끝). 저장소마다 새로 만들기 · 원격에서 받기 · 이 컴퓨터의 폴더 연결 중 고른다")
+    say("  첫 저장소 키를 빈칸으로 두면 저장소 없이 셋업하고, 나중에 `bootstrap.py add-repo` 로 더한다")
     while True:
-        key = ask(f"저장소 {len(cfg['repos']) + 1} 키(영문, 작업자 이름 <키>-worker)", "", reader)
-        if not key:
-            if cfg["repos"]:
-                break
-            say("  저장소를 하나 이상 넣는다.")
-            continue
-        r = {"key": key}
-        how = ask("  (1) 새로 만들기 (2) 원격 주소에서 받기(clone) (3) 이 컴퓨터에 있는 폴더 연결", "1", reader)
-        if how == "3":
-            r["source"] = "local"
-            r["path"] = ask("  연결할 폴더 경로(다른 위치여도 된다. 옮기지 않는다)", "", reader)
-            local = Path(os.path.expanduser(r["path"]))
-            r["dir"] = local.name
-            r["remote"] = ask("  GitHub 원격(조직/이름)", hl.github_remote(local), reader)
-            r["base_branch"] = ask("  기준 브랜치(그 저장소의 기본 브랜치)", hl.detect_base_branch(local) or "main", reader)
-            r["connect_files"] = ask_yes("  작업자용 최소 파일(CLAUDE.md · AGENTS.md · .claude/settings.json)을 없는 것만 더할까", False, reader)
-        else:
-            if how == "2":
-                r["source"], r["url"] = "clone", ask("  원격 주소", "", reader)
-            r["dir"] = ask("  폴더", key, reader)
-            r["remote"] = ask("  GitHub 원격(조직/이름, 없으면 빈칸)", f"{p['github_org']}/{key}" if p["github_org"] else "", reader)
-            r["base_branch"] = ask("  기준 브랜치", "main", reader)
-        r["description"] = ask("  한 줄 설명", "", reader)
-        stack = ask("  스택 (1) node/pnpm (2) python (3) 없음", "3", reader)
-        r["stack"] = {"1": "node", "2": "python"}.get(stack, "none")
-        deploy = {}
-        for pair in filter(None, (s.strip() for s in ask("  배포 의미(브랜치=의미, 쉼표로. 예: develop=dev 배포,main=상용 배포)", "", reader).split(","))):
-            if "=" in pair:
-                b, m = pair.split("=", 1)
-                deploy[b.strip()] = m.strip()
-        r["deploy"] = deploy
-        r["ask_on_push"] = [s.strip() for s in ask("  push 때 물을 브랜치(쉼표로, 없으면 빈칸)", "", reader).split(",") if s.strip()]
-        checks = ask("  검사 명령(쉼표로, 빈칸이면 스택 기본값)", "", reader)
-        if checks:
-            r["checks"] = [s.strip() for s in checks.split(",") if s.strip()]
+        r = ask_repo(p.get("github_org") or "", len(cfg["repos"]) + 1, reader)
+        if r is None:
+            if not cfg["repos"]:
+                say("  저장소는 나중에 추가한다(add-repo)")
+            break
         cfg["repos"].append(r)
 
     say("\n[3/4] 규칙 스킬: 절차 뼈대 5개는 항상 넣는다")
@@ -221,31 +312,58 @@ def node_upgrade_command(kind: str) -> Optional[Tuple[List[str], str]]:
     return None
 
 
+AFTER_NODE = "__after_node__"  # npm 이 node 설치 뒤에 생기므로 실행할 때 명령을 다시 고른다
+INSTALLING = ("설치", "올림", "설치(선택)")
+
+
 def plan_tools(cfg: dict, kind: str) -> List[dict]:
-    """도구마다 {tool, found, action(건너뜀 · 올림 · 설치 · 안내), cmd, hint}."""
+    """도구마다 {tool, found, action(건너뜀 · 올림 · 설치 · 설치(선택) · 안내), cmd, hint}.
+    자동 설치가 되는 것은 모두 설치 줄로 만든다(동의 한 번). 안내는 자동 방법이 없을 때만."""
     have = lambda name: hl.find_tool(name, kind, hl.tool_extra_paths(name, kind)) is not None  # noqa: E731
     rows = [{"tool": "python", "found": sys.version.split()[0], "action": "건너뜀", "cmd": None,
              "hint": "3.9 이상이라 충분하다" if sys.version_info >= hl.MIN_PYTHON else "3.9 미만"}]
+    node_coming = False
     for tool in needed_tools(cfg):
         path, info, ver = detect(tool, kind)
         row = {"tool": tool, "found": info if path else (ver or "없음"), "action": "건너뜀", "cmd": None, "hint": ""}
         if path:
             rows.append(row)
             continue
-        if tool == "orca":
-            row["action"], row["hint"] = "안내", {
-                "mac": "brew install --cask stablyai/orca/orca 또는 https://onorca.dev",
-                "windows": "winget install --id StablyAI.Orca",
-                "linux": "https://github.com/stablyai/orca/releases 의 AppImage"}[kind]
-        elif tool == "node" and ver:
+        if tool == "node" and ver:
             up = node_upgrade_command(kind)
             cmd, hint = up if up else hl.install_command("node", kind, have)
             row.update(action="올림" if cmd else "안내", cmd=cmd, hint=hint)
         else:
             cmd, hint = hl.install_command(tool, kind, have)
-            row.update(action="설치" if cmd else "안내", cmd=cmd, hint=hint)
+            if cmd is None and tool in ("claude", "codex", "pnpm") and node_coming:
+                cmd, hint = [AFTER_NODE], "node 설치 뒤 npm install -g " + {"claude": "@anthropic-ai/claude-code",
+                                                                       "codex": "@openai/codex", "pnpm": "pnpm"}[tool]
+            action = ("설치(선택)" if tool == "orca" else "설치") if cmd else "안내"
+            row.update(action=action, cmd=cmd, hint=hint)
+        if tool == "node" and row["action"] in INSTALLING:
+            node_coming = True
         rows.append(row)
+    if hl.orca_on(cfg) and kind == "windows" and not hl.find_bash(kind):
+        # Orca 스크립트(bash)용. Git for Windows 가 있으면 설치 자리에서 찾으므로 여기 오지 않는다
+        cmd, hint = hl.install_command("git", kind, have)
+        rows.append({"tool": "bash(Git for Windows)", "found": "없음", "action": "설치" if cmd else "안내", "cmd": cmd, "hint": hint})
     return rows
+
+
+def run_install(cmd: List[str], timeout: int = 1800) -> Tuple[int, str]:
+    """설치 명령 하나. __download__ 는 파이썬으로 받는다(Linux Orca AppImage)."""
+    if cmd[0] == "__download__":
+        url, dest = cmd[1], Path(cmd[2])
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with urllib.request.urlopen(url, timeout=300) as resp:
+                dest.write_bytes(resp.read())
+            dest.chmod(0o755)
+            return 0, str(dest)
+        except (OSError, ValueError) as exc:
+            return 1, str(exc)
+    exe = shutil.which(cmd[0]) or cmd[0]
+    return run([exe] + cmd[1:], timeout=timeout)
 
 
 def plan_table(rows: List[dict]) -> str:
@@ -273,25 +391,45 @@ def refresh_node_path(kind: str) -> None:
 def tools_step(cfg: dict, kind: str, rep: Report, yes: bool, interactive: bool) -> None:
     rows = plan_tools(cfg, kind)
     say("\n도구 감지 결과\n" + plan_table(rows))
-    todo = [r for r in rows if r["action"] in ("설치", "올림")]
+    todo = [r for r in rows if r["action"] in INSTALLING]
     go = yes or (interactive and todo and ask_yes("\n위 표의 설치 · 올림을 진행할까요", True, on_eof=False))
     if todo and not go:
         say("설치는 건너뛰고 템플릿 받기와 셋업은 계속한다. 빠진 도구는 마지막 「나중에 할 일」에 적는다")
+    have = lambda name: hl.find_tool(name, kind, hl.tool_extra_paths(name, kind)) is not None  # noqa: E731
     for r in rows:
         tool = r["tool"]
         if r["action"] == "건너뜀":
             rep.add(f"도구 {tool}", "통과", r["found"])
-        elif r["action"] == "안내" or not go:
+            continue
+        if r["action"] == "안내" or not go:
             rep.add(f"도구 {tool}", "없음", f"{r['action']}: {r['hint']}")
             rep.todo(f"{tool} {'올리기' if r['action'] == '올림' else '설치'}: {r['hint']}")
-        else:
-            exe = shutil.which(r["cmd"][0]) or r["cmd"][0]
-            say(f"[{r['action']}] {r['hint']}")
-            code, out = run([exe] + r["cmd"][1:], timeout=1800)
-            if tool == "node":
-                refresh_node_path(kind)
-            path, info, _ = detect(tool, kind)
-            rep.add(f"도구 {tool}", "통과" if path else "실패", info if path else f"명령 실패({code}): {out[-200:]}")
+            if tool == "orca" and (r["action"] == "설치(선택)" or cfg["orca"].get("_auto")):
+                cfg["orca"]["enabled"] = False  # 설치를 안 했으면 Orca 없이 만든다(나중에 설치하고 다시 돌리면 켜진다)
+            continue
+        cmd, hint = r["cmd"], r["hint"]
+        if cmd and cmd[0] == AFTER_NODE:
+            cmd, hint = hl.install_command(tool, kind, have)
+            if not cmd:
+                rep.add(f"도구 {tool}", "없음", "node 가 준비되지 않아 설치하지 못했다")
+                rep.todo(f"{tool} 설치: node {hl.MIN_NODE_MAJOR} 을 넣은 뒤 {hint}")
+                continue
+        say(f"[{r['action']}] {hint}")
+        code, out = run_install(cmd)
+        if kind == "windows":
+            hl.refresh_windows_path()  # winget 설치 뒤 새 창 없이 이어지게
+        if tool in ("node",) or cmd[0] == "npm":
+            refresh_node_path(kind)
+        detected = detect(tool if not tool.startswith("bash") else "git", kind)[0] is not None
+        if tool.startswith("bash"):
+            detected = hl.find_bash(kind) is not None
+        state, detail = hl.install_state(tool, code, detected)
+        rep.add(f"도구 {tool}", state, detect(tool, kind)[1] if state == "통과" and not tool.startswith("bash") else detail
+                + ("" if state == "통과" or code == 0 else f": {out[-160:]}"))
+        if state != "통과":
+            rep.todo(f"{tool}: {detail}")
+            if tool == "orca":
+                cfg["orca"]["enabled"] = False
     login_step(cfg, kind, rep)
 
 
@@ -442,7 +580,7 @@ def connect_repo(cfg: dict, r: dict, dest: Path, rep: Report) -> None:
     for rel in kept:
         rep.todo(f"{r['dir']}: {rel} 이 이미 있어 덮지 않았다. 필요하면 {cfg['project']['slug']} 플러그인 켜기 · 하네스 안내를 직접 합친다")
     if not r.get("connect_files"):
-        rep.todo(f"{r['dir']}: 작업자용 최소 파일(CLAUDE.md · AGENTS.md · .claude/settings.json)은 더하지 않았다. 원하면 harness.json 에 connect_files: true 로 다시 실행")
+        rep.todo(f"{r['dir']}: 작업자용 최소 파일(CLAUDE.md · AGENTS.md · .claude/settings.json)은 더하지 않았다. 원하면 harness.json 에 connect_files: true 로 두고 {hl.boot_cmd('run')}")
     rep.add(label, "통과", detail)
 
 
@@ -542,7 +680,7 @@ def remote_step(cfg: dict, target: Path, parent: Path, rep: Report, offline: boo
             bad = [lb for lb in labels if run([gh, "label", "create", lb, "-R", remote, "--force"], timeout=30)[0] != 0]
             rep.add("이슈 라벨", "실패" if bad else "통과", ("못 만든 것: " + ", ".join(bad)) if bad else " · ".join(labels))
     elif cfg["harness_repo"].get("remote"):
-        rep.todo("이슈 라벨: 원격을 만든 뒤 bootstrap run --create-github 을 다시 돌리면 만든다")
+        rep.todo(f"이슈 라벨: 원격을 만든 뒤 {hl.boot_cmd('run --create-github')} 을 다시 돌리면 만든다")
 
 
 # ---------------------------------------------------------------- 엔진 설치
@@ -588,7 +726,7 @@ def install_step(cfg: dict, target: Path, parent: Path, kind: str, rep: Report) 
         claude = hl.find_tool("claude", kind, hl.tool_extra_paths("claude", kind))
         if not claude:
             rep.add("Claude 플러그인", "없음", "claude CLI 가 없다")
-            rep.todo("claude CLI 설치 뒤 bootstrap run 을 다시 돌린다")
+            rep.todo(f"claude CLI 설치 뒤 {hl.boot_cmd('run')} 를 다시 돌린다")
         else:
             code, out = run([claude, "plugin", "marketplace", "list"], timeout=60)
             if slug in out:
@@ -615,7 +753,7 @@ def install_step(cfg: dict, target: Path, parent: Path, kind: str, rep: Report) 
         codex = hl.find_tool("codex", kind, hl.tool_extra_paths("codex", kind))
         if not codex:
             rep.add("Codex 플러그인", "없음", "codex CLI 가 없다")
-            rep.todo("codex CLI 설치 뒤 bootstrap run 을 다시 돌린다")
+            rep.todo(f"codex CLI 설치 뒤 {hl.boot_cmd('run')} 를 다시 돌린다")
         else:
             code, out = run([codex, "plugin", "add", f"{slug}@{slug}-local", "--json"], cwd=target, timeout=180)
             rep.add("Codex 플러그인", "통과" if code == 0 else "실패",
@@ -625,18 +763,34 @@ def install_step(cfg: dict, target: Path, parent: Path, kind: str, rep: Report) 
 def orca_step(cfg: dict, target: Path, parent: Path, kind: str, rep: Report) -> None:
     if not hl.orca_on(cfg):
         return
-    if kind == "windows" and not shutil.which("bash"):
+    if kind == "windows" and not hl.find_bash(kind):
         rep.add("Orca 스크립트", "안내", "scripts/orca-*.sh 는 bash 가 필요하다(Git for Windows)")
         rep.todo("Git for Windows(bash) 설치: winget install -e --id Git.Git. 없으면 작업자는 서브에이전트 · Codex 앱 워크트리로")
     orca = hl.find_tool("orca", kind, hl.tool_extra_paths("orca", kind))
     if not orca:
         rep.add("Orca 등록", "없음", "orca CLI 를 못 찾음(ORCA_BIN 으로 지정 가능)")
-        rep.todo("Orca 설치 · 실행 뒤 bootstrap run 을 다시 돌린다")
+        rep.todo(f"Orca 설치 · 실행 뒤 {hl.boot_cmd('run')} 를 다시 돌린다")
         return
     code, out = run([orca, "repo", "list", "--json"], timeout=30)
     if code != 0:
-        rep.add("Orca 등록", "실패", "Orca 앱을 켠 뒤 다시 실행")
-        return
+        # CLI 는 앱에 붙는다: 앱을 한 번 열고 응답할 때까지 기다린다(최대 60초)
+        launch = hl.orca_launch_command(kind)
+        if launch:
+            say(f"[Orca] 앱을 연다: {' '.join(launch)}")
+            try:
+                subprocess.Popen(launch, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                pass
+        deadline = time.time() + float(os.environ.get("HARNESS_ORCA_WAIT", "60"))
+        while time.time() < deadline:
+            time.sleep(1)
+            code, out = run([orca, "repo", "list", "--json"], timeout=30)
+            if code == 0:
+                break
+        if code != 0:
+            rep.add("Orca 등록", "안내", "Orca 앱이 응답하지 않는다")
+            rep.todo(f"Orca 를 한 번 열고 {hl.boot_cmd('run', kind)} 를 다시 돌린다(저장소 등록)")
+            return
     try:
         known = {os.path.realpath(r.get("path", "")) for r in (json.loads(out).get("result") or {}).get("repos") or []}
     except ValueError:
@@ -807,12 +961,26 @@ def caller_base() -> Path:
     return base
 
 
+def dir_is_empty(path: Path) -> bool:
+    try:
+        return not [p for p in path.iterdir() if p.name not in (".DS_Store", "desktop.ini", "Thumbs.db")]
+    except OSError:
+        return False
+
+
 def project_root(args, cfg: Optional[dict]) -> Path:
-    """프로젝트 루트 = --root, 없으면 <실행한 폴더>/<프로젝트 슬러그>. 그 안에 하네스와 새 저장소들."""
+    """프로젝트 루트 = --root, 없으면 실행한 폴더 기준:
+    - 실행한 폴더에 이미 이 하네스가 있거나, 폴더 이름이 슬러그와 같거나, 폴더가 비어 있으면 그 폴더 자체
+    - 아니면 <실행한 폴더>/<슬러그>
+    그 안에 하네스와 새 저장소들."""
     if getattr(args, "root", None):
         return Path(args.root).expanduser().resolve()
     slug = cfg["project"]["slug"] if cfg else "project"
-    return caller_base() / slug
+    hdir = cfg["harness_repo"]["dir"] if cfg else "orchestrator"
+    base = caller_base()
+    if (base / hdir / hl.CONFIG_NAME).is_file() or base.name.lower() == slug or dir_is_empty(base):
+        return base
+    return base / slug
 
 
 def resolve_target(args, cfg: Optional[dict]) -> Path:
@@ -847,9 +1015,21 @@ def load_or_ask(args, kind: str) -> dict:
         return hl.load_config(Path(args.target) / hl.CONFIG_NAME)
     if (TEMPLATE_ROOT / hl.CONFIG_NAME).is_file():
         return hl.load_config(TEMPLATE_ROOT / hl.CONFIG_NAME)
+    if not args.target and not args.root:
+        # 같은 폴더에서 다시 실행: 이미 만든 하네스가 있으면 새로 묻지 않고 그것을 쓴다(멱등)
+        base = caller_base()
+        for cand in [base] + sorted(p for p in base.iterdir() if p.is_dir()) if base.is_dir() else []:
+            if (cand / hl.CONFIG_NAME).is_file() and (cand / gen.MANIFEST).is_file():
+                say(f"이미 만든 하네스를 쓴다: {cand}")
+                args.target = str(cand)
+                return hl.load_config(cand / hl.CONFIG_NAME)
     if args.non_interactive:
         raise hl.ConfigError("--non-interactive 에는 --config 가 필요하다")
-    cfg = interview(kind, default_root=None if (args.root or args.target) else project_root)
+    if getattr(args, "detail", False):
+        cfg = interview(kind, default_root=None if (args.root or args.target) else project_root)
+    else:
+        fixed = Path(args.target).expanduser().resolve().parent if args.target else (Path(args.root).expanduser().resolve() if args.root else None)
+        cfg = simple_interview(kind, root_fixed=fixed, use_orca=not getattr(args, "no_orca", False))
     chosen = cfg.pop("_root", None)
     if chosen and not args.target:
         args.root = chosen
@@ -876,21 +1056,27 @@ def cmd_run(args) -> int:
         hl.eprint("템플릿 저장소 자신에 하네스를 만들지 않는다. --target 으로 새 프로젝트 하네스 폴더를 준다")
         return 2
     reason = None if cfg["harness_repo"].get("source") == "local" else target_problem(target, args.force)
+    local_init = False
     if cfg["harness_repo"].get("source") == "local" and not (target / ".git").exists():
-        reason = f"하네스로 연결할 git 저장소가 없다: {target}"
+        if cfg["harness_repo"].get("git_init") and target.is_dir():
+            git_init(target, cfg["harness_repo"]["base_branch"])
+            local_init = True  # 방금 git init 한 폴더: 첫 커밋에는 생성한 파일만 담는다
+        else:
+            reason = f"하네스로 연결할 git 저장소가 없다: {target}"
     if reason:
         hl.eprint(reason)
         return 2
     rep = Report()
     say(f"하네스 폴더: {target}  (프로젝트 루트: {target.parent} · 템플릿 원본: {TEMPLATE_ROOT})")
     tools_step(cfg, kind, rep, yes=args.yes, interactive=not args.non_interactive)
-    created = cfg["harness_repo"].get("source") != "local" and (
-        not (target / ".git").exists() or (not has_commit(target) and not (target / hl.CONFIG_NAME).is_file()))
+    created = local_init or (cfg["harness_repo"].get("source") != "local" and (
+        not (target / ".git").exists() or (not has_commit(target) and not (target / hl.CONFIG_NAME).is_file())))
     if not (target / ".git").exists():
         git_init(target, cfg["harness_repo"]["base_branch"])
     elif created:  # 먼저 git init 만 해 둔 빈 저장소: 기준 브랜치 이름을 맞춘다
         run(["git", "symbolic-ref", "HEAD", f"refs/heads/{cfg['harness_repo']['base_branch']}"], cwd=target)
     rep.add("하네스 저장소", "통과", f"{'새로 만듦' if created else '있음'} {target}")
+    cfg["orca"].pop("_auto", None)
     text = hl.dump_config(cfg)
     cpath = target / hl.CONFIG_NAME
     if not cpath.is_file() or cpath.read_text(encoding="utf-8") != text:
@@ -915,7 +1101,7 @@ def cmd_run(args) -> int:
         orca_step(cfg, target, parent, kind, rep)
     doctor(target, kind, args.offline, rep, tools=False)
     say("\n" + rep.table())
-    say("\n다음: 규칙 스킬의 「채울 자리」를 채운다. 템플릿이 갱신되면 python3 harness/scripts/bootstrap.py update")
+    say(f"\n다음: 규칙 스킬의 「채울 자리」를 채운다. 저장소는 {hl.boot_cmd('add-repo')} 로 더한다. 템플릿이 갱신되면 하네스 폴더({target})에서 {hl.boot_cmd('update')}")
     return 1 if rep.failed() else 0
 
 
@@ -935,6 +1121,66 @@ def target_problem(target: Path, force: bool) -> Optional[str]:
         return (f"{target} 가 비어 있지 않고 하네스 표시(harness.json)가 없다. 안에 있는 파일을 덮거나 커밋하지 않도록 멈춘다. "
                 "그래도 여기에 만들려면 --force (원래 있던 파일은 커밋에 넣지 않는다)")
     return None
+
+
+def cmd_add_repo(args) -> int:
+    """저장소 하나를 나중에 더한다: harness.json 에 추가 → 준비(새로 만들기 · 받기 · 연결) → 생성 → 그 저장소에만 설치 · 신뢰 · 등록. 멱등."""
+    kind = hl.os_kind()
+    target = resolve_target(args, None)
+    cpath = target / hl.CONFIG_NAME
+    try:
+        cfg = hl.load_config(cpath)
+    except hl.ConfigError as exc:
+        hl.eprint(f"{exc}\n하네스 폴더에서 부르거나 --target 으로 하네스 폴더를 준다")
+        return 2
+    if args.repo:
+        try:
+            raw = json.loads(Path(args.repo).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            hl.eprint(f"저장소 설정 조각을 못 읽음: {args.repo} ({exc})")
+            return 2
+        new = raw if isinstance(raw, list) else [raw]
+    else:
+        r = ask_repo(cfg["project"].get("github_org") or "", len(cfg["repos"]) + 1, detail=args.detail)
+        if r is None:
+            say("더할 저장소가 없다")
+            return 0
+        new = [r]
+    known = {r["key"]: r for r in cfg["repos"]}
+    added = []
+    for r in new:
+        if r.get("key") in known:
+            say(f"저장소 {r['key']} 는 이미 있다. 설정은 그대로 두고 준비 · 설치만 다시 확인한다")
+            continue
+        cfg["repos"].append(r)
+        added.append(r.get("key"))
+    raw_cfg = json.loads(cpath.read_text(encoding="utf-8"))
+    raw_cfg["repos"] = [dict(r) for r in raw_cfg.get("repos", [])] + [r for r in new if r.get("key") in added]
+    cfg = hl.normalize(raw_cfg)
+    errs = hl.validate(cfg)
+    if errs:
+        hl.eprint("설정 오류:\n- " + "\n- ".join(errs))
+        return 2
+    keys = {r.get("key") for r in new}
+    sub = dict(cfg, repos=[r for r in cfg["repos"] if r["key"] in keys])
+    text = hl.dump_config(cfg)
+    if cpath.read_text(encoding="utf-8") != text:
+        with open(cpath, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+    rep = Report()
+    parent = hl.git_common_parent(target) or target.parent
+    new_repos = repos_step(sub, parent, rep, args.offline, created_record(target))
+    w = gen.generate(cfg, target, created_repos=new_repos)
+    rep.add("생성", "통과", f"바뀐 파일 {len(w.changed)} · 사람이 채운 파일 유지 {len(w.kept)}")
+    remote_step(sub, target, parent, rep, args.offline, args.create_github)
+    if args.skip_install:
+        rep.add("엔진 설치", "건너뜀", "--skip-install")
+    else:
+        install_step(sub, target, parent, kind, rep)
+        orca_step(sub, target, parent, kind, rep)
+    say(rep.table())
+    say(f"\n더한 저장소: {', '.join(added) or '없음(이미 있음)'}. 하네스 변경(harness.json · 작업자 · 지도)을 보고 경로를 명시해 커밋한다")
+    return 1 if rep.failed() else 0
 
 
 def config_for(args) -> dict:
@@ -1004,13 +1250,20 @@ def main(argv=None) -> int:
     p.add_argument("--create-github", action="store_true", help="gh 로그인이 있으면 원격 저장소(비공개) · 라벨을 만든다")
     p.add_argument("--skip-install", action="store_true", help="엔진 플러그인 · Orca 등록을 건너뛴다")
     p.add_argument("--force", action="store_true", help="비어 있지 않은 폴더(git 저장소가 아닌 것)에 하네스를 만든다")
+    p.add_argument("--detail", action="store_true", help="기본값을 쓰지 않고 전부 묻는다(GitHub · 호칭 · 하네스 연결 · 저장소 · 스킬 · Orca)")
+    p.add_argument("--no-orca", action="store_true", help="Orca 를 쓰지 않는다(기본은 있으면 쓰고 없으면 설치를 제안)")
     for name in ("check", "tools", "generate", "doctor"):
         sub.add_parser(name, parents=[common])
+    a = sub.add_parser("add-repo", parents=[common], help="저장소를 나중에 하나 더한다(새로 만들기 · 원격 받기 · 폴더 연결)")
+    a.add_argument("--repo", help="저장소 설정 조각(JSON, 객체 하나 또는 목록). 없으면 대화로 묻는다")
+    a.add_argument("--create-github", action="store_true", help="gh 로그인이 있으면 새 저장소의 원격(비공개)을 만든다")
+    a.add_argument("--skip-install", action="store_true", help="엔진 플러그인 · Orca 등록을 건너뛴다")
+    a.add_argument("--detail", action="store_true", help="폴더 · 원격 · 브랜치 · 설명 · 배포 의미 · push 브랜치 · 검사 명령까지 묻는다")
     u = sub.add_parser("update", parents=[common], help="템플릿 최신본의 엔진을 가져와 다시 생성")
     u.add_argument("--source", help="템플릿 주소 또는 로컬 폴더(기본: harness.json template.url)")
     args = ap.parse_args(argv)
     handlers = {"run": cmd_run, "check": cmd_check, "tools": cmd_tools, "generate": cmd_generate,
-                "doctor": cmd_doctor, "update": cmd_update}
+                "doctor": cmd_doctor, "update": cmd_update, "add-repo": cmd_add_repo}
     if not args.cmd:
         args = ap.parse_args(["run"] + list(argv if argv is not None else sys.argv[1:]))
     return handlers[args.cmd](args)

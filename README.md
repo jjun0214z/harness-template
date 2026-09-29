@@ -8,7 +8,30 @@ curl -fsSL https://raw.githubusercontent.com/jjun0214z/harness-template/main/ins
 irm https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1 | iex
 ```
 
-위 한 줄이면 끝이다(macOS · Linux 는 터미널, Windows 는 PowerShell). 내려받기 · 압축 풀기 · GitHub 계정 · gh 는 필요 없다.
+**한 줄 → 질문 2개 → 끝.** 프로젝트를 만들 폴더에서 위 한 줄을 실행한다(macOS · Linux 는 터미널, Windows 는 PowerShell). 내려받기 · 압축 풀기 · GitHub 계정 · gh 는 필요 없다.
+
+1. **프로젝트 이름** (Enter = 지금 폴더 이름)
+2. **엔진** Claude · Codex · 둘 다 (Enter = 설치돼 있는 것)
+3. 요약 「여기에 만듭니다: <경로> · 엔진 · 저장소는 나중에 · Orca」 → Enter
+4. 도구 표 → 설치 동의 한 번(Orca 도 없으면 여기서 같이 설치, `--no-orca` 로 뺀다)
+
+나머지는 기본값이다: 폴더 이름이 프로젝트 이름과 같거나 폴더가 비어 있으면 **그 폴더에**, 아니면 `<지금 폴더>/<이름>` 에 만든다 · 저장소 0개(나중에 add-repo) · GitHub 없음(로컬만) · 호칭 「대표님」 · 규칙 스킬 틀 전부. 전부 고르려면 `--detail`.
+
+**Windows** 는 PowerShell 한 줄이 기본이다. 붙여 넣다 줄이 끊기면 두 줄로 해도 된다:
+```powershell
+$u = "https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1"
+irm $u | iex
+```
+Git Bash 에서 위 `curl … | bash` 한 줄을 써도 된다(스스로 Windows 임을 알아채 PowerShell 설치로 넘기고, 실행한 폴더와 옵션도 같이 넘긴다).
+
+### 설정 바꾸기
+
+| 하고 싶은 것 | 하네스 폴더에서 (Windows 는 `python3` 대신 `py -3`) |
+| --- | --- |
+| 저장소 더하기(새로 만들기 · 원격 받기 · 이 컴퓨터 폴더 연결) | `python3 harness/scripts/bootstrap.py add-repo` (자세히: `--detail`) |
+| 엔진 · Orca · 호칭 · GitHub 조직 바꾸기 | `harness.json` 을 고친 뒤 `python3 harness/scripts/generate.py` |
+| 템플릿 갱신 받기 | `python3 harness/scripts/bootstrap.py update` |
+| 점검 | `python3 harness/scripts/bootstrap.py doctor` |
 
 | 새 프로젝트를 만든다 | 이미 있는 저장소를 연결한다 |
 | --- | --- |
@@ -83,6 +106,8 @@ gh · GitHub 로그인은 **선택**이다. 없으면 로컬 하네스만 만들
 }
 ```
 
+**저장소는 셋업 때 넣어도 되고, 0개로 셋업한 뒤 나중에 더해도 된다**: 하네스 폴더에서 `python3 harness/scripts/bootstrap.py add-repo`(대화형, 또는 `--repo <조각.json>`). 새로 만들기 · 원격 받기 · 이 컴퓨터 폴더 연결 중 고르고, 그 저장소에만 작업자 · 지도 · 설치 · 등록을 더한다.
+
 빈 칸은 기본값으로 채운다: `dir` = `key`, `remote` = `<github_org>/<key>`(조직이 없으면 로컬만), `source` = `new`(url 을 적으면 `clone`, 이 컴퓨터의 폴더는 `local` + `path`: 폴더 이름 · 기본 브랜치 · 원격을 그 저장소에서 읽고, `connect_files: true` 일 때만 없는 CLAUDE.md · AGENTS.md · .claude/settings.json 을 더한다),
 `stack`(`node` · `python` · `none`)에 따라 필요한 런타임과 작업자 검사 명령 기본값. 빈 저장소라 의존성(pnpm install 등)은 설치하지 않는다.
 전체 예시: `examples/harness.example.json`. 설정만 있으면 `./bootstrap.sh run --config harness.json --yes --non-interactive`.
@@ -117,7 +142,7 @@ Claude 세션은 정상 종료만 하고(안 끝나면 멈추고 보고), Codex 
 
 | 무엇 | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| 한 줄 설치 | `install.sh` | `install.sh` | `install.ps1` |
+| 한 줄 설치 | `install.sh` | `install.sh` | `install.ps1` (Git Bash 에서 부른 `install.sh` 는 자동으로 이것으로 넘긴다) |
 | 패키지 관리자 | 개발자 도구(`xcode-select --install`) + brew | apt · dnf (sudo) | winget (없으면 App Installer 안내) |
 | node 22 | 쓰던 nvm · fnm, 없으면 brew `node@22` | 쓰던 nvm · fnm, 없으면 nvm 설치 | 쓰던 nvm-windows · fnm, 없으면 winget |
 | 설치 뒤 PATH | 같은 셸에서 brew shellenv · node 경로를 올린다 | 같음 | 레지스트리에서 PATH 를 다시 읽는다 |

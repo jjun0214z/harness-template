@@ -45,6 +45,28 @@ done
 have() { command -v "$1" >/dev/null 2>&1; }
 say() { printf '%s\n' "$*"; }
 
+# Windows 의 Git Bash · MSYS · Cygwin 에서 불렸을 때: 도구 설치(winget)와 경로가 Windows 방식이라 PowerShell 설치(install.ps1)로 넘긴다.
+# 실행한 폴더(Windows 경로로 바꿔서) · HARNESS_* 환경변수 · 받은 인자(HARNESS_ARGS)를 그대로 넘긴다.
+handoff_windows() {
+  PS1_URL="${HARNESS_PS1_URL:-https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1}"
+  winpath() { if have cygpath; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+  export HARNESS_CALLER_CWD="$(winpath "$HARNESS_CALLER_CWD")"
+  [ -n "${HARNESS_DIR:-}" ] && export HARNESS_DIR="$(winpath "$HARNESS_DIR")"
+  [ "$YES" = 1 ] && export HARNESS_YES=1
+  [ "$DRY" = 1 ] && export HARNESS_DRY_RUN=1
+  [ "$NORUN" = 1 ] && export HARNESS_NO_RUN=1
+  export HARNESS_ARGS="${BOOT_ARGS[*]}"
+  PS=""
+  for c in pwsh.exe pwsh powershell.exe powershell; do have "$c" && { PS="$c"; break; }; done
+  if [ -z "$PS" ]; then
+    say "Windows 로 보인다($(uname -s 2>/dev/null)). 그런데 PowerShell 을 찾지 못했다. PowerShell 창을 열어 이 한 줄을 실행한다:"
+    say "  irm $PS1_URL | iex"
+    exit 2
+  fi
+  say "Windows(Git Bash) 로 보인다. PowerShell 설치로 넘긴다: $PS · 프로젝트 위치 $HARNESS_CALLER_CWD"
+  exec "$PS" -NoProfile -ExecutionPolicy Bypass -Command "irm $PS1_URL | iex"
+}
+
 TTY=0; ( exec </dev/tty ) 2>/dev/null && TTY=1
 [ "${HARNESS_NO_TTY:-0}" = 1 ] && TTY=0   # 시험: 사람 입력 창을 쓰지 않는다
 if [ "$TTY" = 1 ]; then exec </dev/tty; else exec </dev/null; fi
@@ -52,6 +74,7 @@ if [ "$TTY" = 1 ]; then exec </dev/tty; else exec </dev/null; fi
 case "${HARNESS_OS:-$(uname -s 2>/dev/null)}" in
   mac|Darwin) OS=mac ;;
   linux|Linux) OS=linux ;;
+  MINGW*|MSYS*|CYGWIN*|windows) handoff_windows ;;   # Git Bash 등: PowerShell 설치로 넘긴다
   *) say "이 스크립트는 macOS · Linux 용이다. Windows 는 PowerShell 에서:"
      say "  irm https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1 | iex"; exit 2 ;;
 esac

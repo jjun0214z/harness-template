@@ -38,6 +38,12 @@ FILL_SKILLS = ("code-convention", "security-privacy", "operations", "design")
 DEFAULT_PROTECTED = ("CLAUDE.md", "AGENTS.md", "harness.json", ".claude/", ".claude-plugin/",
                      ".codex/", ".agents/", "plugins/", "harness/")
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+REPO_KEY_RE = re.compile(r"^[a-z][a-z0-9-]{0,39}$")  # 저장소 키는 영문 소문자로 시작(윈도우 실측: 「1」 이 키로 들어갔다)
+# Orca 공식 설치(https://github.com/stablyai/orca README, 2026-09-29 확인): mac brew cask, Linux releases/latest 의 AppImage.
+# Windows 는 README 에 winget 줄이 없고 winget 패키지 StablyAI.Orca(winstall.app · wingetly.io 목록)를 쓴다.
+ORCA_BREW_CASK = "stablyai/orca/orca"
+ORCA_WINGET_ID = "StablyAI.Orca"
+ORCA_APPIMAGE_URL = "https://github.com/stablyai/orca/releases/latest/download/orca-linux.AppImage"
 SLUG_RE = KEY_RE
 BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 REMOTE_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -136,14 +142,13 @@ def validate(cfg: dict) -> List[str]:
     if hr.get("remote") and not REMOTE_RE.match(hr["remote"]):
         errs.append("harness_repo.remote 는 <조직>/<저장소> 형식이다")
     repos = cfg.get("repos") or []
-    if not repos:
-        errs.append("repos 가 비었다. 저장소를 하나 이상 적는다")
+    # 저장소는 0개여도 된다(나중에 bootstrap.py add-repo 로 더한다)
     seen_keys, seen_dirs = set(), {hr.get("dir")}
     for i, r in enumerate(repos):
         where = f"repos[{i}]"
         key = r.get("key") or ""
-        if not KEY_RE.match(key):
-            errs.append(f"{where}.key 는 영문 소문자·숫자·- 다(작업자 이름 <key>-worker 가 된다)")
+        if not REPO_KEY_RE.match(key):
+            errs.append(f"{where}.key 는 영문 소문자로 시작하고 소문자 · 숫자 · - 만 쓴다(작업자 이름 <key>-worker 가 된다)")
         if key in seen_keys:
             errs.append(f"{where}.key '{key}' 가 겹친다")
         seen_keys.add(key)
@@ -405,7 +410,20 @@ def install_command(tool: str, kind: str, have: Callable[[str], bool]) -> Tuple[
         if have("npm"):
             return ["npm", "install", "-g", pkg], f"npm install -g {pkg}"
         return None, f"node {MIN_NODE_MAJOR} 을 먼저 설치한 뒤 npm install -g {pkg}"
+    if tool == "orca":
+        if kind == "mac" and have("brew"):
+            return ["brew", "install", "--cask", ORCA_BREW_CASK], f"brew install --cask {ORCA_BREW_CASK}"
+        if kind == "windows" and have("winget"):
+            cmd = ["winget", "install", "-e", "--id", ORCA_WINGET_ID, "--accept-source-agreements", "--accept-package-agreements"]
+            return cmd, "winget install -e --id " + ORCA_WINGET_ID
+        if kind == "linux":
+            dest = str(Path.home() / ".local" / "bin" / "orca-linux.AppImage")
+            return ["__download__", ORCA_APPIMAGE_URL, dest], f"{ORCA_APPIMAGE_URL} 를 {dest} 로 받기"
+        return None, "https://github.com/stablyai/orca/releases 에서 받는다"
     if tool == "pnpm":
+        if kind == "windows" and have("npm"):
+            # corepack enable 은 C:\Program Files\nodejs 에 쓰려다 관리자 권한 오류(EPERM)가 난다(윈도우 실측)
+            return ["npm", "install", "-g", "pnpm"], "npm install -g pnpm"
         if have("corepack"):
             return ["corepack", "enable", "pnpm"], "corepack enable pnpm"
         if have("npm"):
@@ -542,6 +560,76 @@ def git_common_parent(start: Path) -> Optional[Path]:
     common = Path(out)
     main = common.parent if common.name == ".git" else common
     return main.parent
+
+
+def refresh_windows_path(env: Optional[Dict[str, str]] = None, winreg_mod=None) -> str:
+    """설치 뒤 새 창 없이 이어지게 레지스트리(시스템 + 사용자)의 PATH 를 다시 읽어 지금 PATH 앞에 붙인다."""
+    env = os.environ if env is None else env
+    try:
+        winreg = winreg_mod or __import__("winreg")
+    except ImportError:
+        return env.get("PATH", "")
+    parts = []
+    for root, sub in ((winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+                      (winreg.HKEY_CURRENT_USER, "Environment")):
+        try:
+            with winreg.OpenKey(root, sub) as key:
+                value, _ = winreg.QueryValueEx(key, "Path")
+                parts += [os.path.expandvars(p) for p in str(value).split(";") if p]
+        except OSError:
+            continue
+    old = env.get("PATH", "").split(os.pathsep) if env.get("PATH") else []
+    merged = list(dict.fromkeys(parts + old))
+    env["PATH"] = os.pathsep.join(merged)
+    return env["PATH"]
+
+
+def find_bash(kind: str, env: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """Orca 스크립트용 bash. Windows 는 PATH 에 없어도 Git for Windows 설치 자리를 본다."""
+    env = dict(os.environ if env is None else env)
+    found = shutil.which("bash", path=env.get("PATH"))
+    if found or kind != "windows":
+        return found
+    for base in filter(None, (env.get("ProgramFiles"), env.get("ProgramW6432"), env.get("ProgramFiles(x86)"),
+                              os.path.join(env["LOCALAPPDATA"], "Programs") if env.get("LOCALAPPDATA") else None)):
+        for rel in (("Git", "bin", "bash.exe"), ("Git", "usr", "bin", "bash.exe")):
+            p = os.path.join(base, *rel)
+            if os.path.isfile(p):
+                return p
+    return None
+
+
+def boot_cmd(args: str, kind: Optional[str] = None, python: Optional[str] = None) -> str:
+    """안내 문구에 넣는 bootstrap 명령을 OS 에 맞게: mac · Linux `python3 harness/scripts/bootstrap.py …`,
+    Windows `py -3 harness\\scripts\\bootstrap.py …`(하네스 폴더에서)."""
+    kind = kind or os_kind()
+    py = python or python_command_name(kind)
+    sep = "\\" if kind == "windows" else "/"
+    return f"{py} harness{sep}scripts{sep}bootstrap.py {args}".rstrip()
+
+
+def orca_launch_command(kind: str, env: Optional[Dict[str, str]] = None) -> Optional[List[str]]:
+    """설치 뒤 Orca 앱을 한 번 연다(CLI 가 앱에 붙기 때문). mac open -a, Windows Start-Process, Linux AppImage."""
+    env = dict(os.environ if env is None else env)
+    if kind == "mac":
+        return ["open", "-a", "Orca"]
+    if kind == "windows":
+        local = env.get("LOCALAPPDATA", "")
+        exe = os.path.join(local, "Programs", "Orca", "Orca.exe") if local else "Orca.exe"
+        return ["powershell", "-NoProfile", "-Command", f"Start-Process -FilePath '{exe}'"]
+    app = Path.home() / ".local" / "bin" / "orca-linux.AppImage"
+    return [str(app)] if app.is_file() else None
+
+
+def install_state(tool: str, code: int, detected: bool) -> Tuple[str, str]:
+    """설치 명령 뒤 표에 적을 (상태, 설명). 종료 코드 0 인데 아직 안 보이면 실패가 아니라 새 창에서 확인(윈도우 실측)."""
+    if detected:
+        return "통과", "설치됨"
+    if code == 0:
+        return "안내", "설치는 끝났는데 이 창의 PATH 에 아직 없다. 새 터미널에서 다시 확인한다"
+    if tool == "pnpm":
+        return "없음", "pnpm 설치 실패(치명 아님). 관리자 PowerShell 에서 corepack enable pnpm 또는 npm install -g pnpm"
+    return "실패", f"설치 명령 실패(종료 코드 {code})"
 
 
 def eprint(*args: object) -> None:
