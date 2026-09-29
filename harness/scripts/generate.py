@@ -50,7 +50,7 @@ def context(cfg: dict) -> Dict[str, str]:
     rows = ["| 폴더 | 원격 | 기준 브랜치 | 그 브랜치에 들어가면 | 작업자 |", "| --- | --- | --- | --- | --- |",
             f"| `.` ({h['dir']}) | {h.get('remote') or '-'} | `{h['base_branch']}` | 배포 없음. 하네스 규칙과 실행 장치 | 오케스트레이터 |"]
     for r in cfg["repos"]:
-        rows.append(f"| `../{r['dir']}` | {r.get('remote') or r.get('url') or '로컬만'} | `{r['base_branch']}` | {md_escape(deploy_text(r))} | `{r['key']}-worker` |")
+        rows.append(f"| `{hl.repo_ref(r)}` | {r.get('remote') or r.get('url') or '로컬만'} | `{r['base_branch']}` | {md_escape(deploy_text(r))} | `{r['key']}-worker` |")
     deploy_rows = ["| 저장소 | 브랜치 | 들어가면 | 승인 |", "| --- | --- | --- | --- |",
                    f"| {h['dir']} (하네스) | `{h['base_branch']}` | 규칙 반영 | 규칙 파일이 바뀌었으면 {owner}께 묻는다(훅이 묻는다) |"]
     for r in cfg["repos"]:
@@ -256,7 +256,7 @@ description: {p['name']} {r['dir']} 저장소({r.get('remote') or r.get('url') o
 너는 {p['name']} **{r['dir']} 저장소 작업자**다. 받은 과제 하나만 하고, 결론만 돌려준다.
 
 ## 자리
-- 저장소: 오케스트레이터에서 부르면 `../{r['dir']}`, 그 저장소 세션에서 부르면 현재 저장소
+- 저장소: 오케스트레이터에서 부르면 `{hl.repo_ref(r)}`, 그 저장소 세션에서 부르면 현재 저장소
 - 기준 브랜치: `origin/{r['base_branch']}` ({deploy_text(r)})
 - 시작: 이미 격리 워크트리 안이면 그대로 쓴다. 아니면 `git -C <저장소> fetch origin && git -C <저장소> worktree add <저장소 부모>/.work/{r['key']}-<과제-슬러그> -b <과제-슬러그> origin/{r['base_branch']}` 로 만들고 그 안에서만 일한다.
 
@@ -411,7 +411,7 @@ def claude_settings(cfg: dict) -> dict:
     py, slug = cfg["platform"]["python"], cfg["project"]["slug"]
     cmd = lambda s: f'{py} "$CLAUDE_PROJECT_DIR/harness/hooks/{s}"'  # noqa: E731
     settings = {
-        "permissions": {"additionalDirectories": [f"../{r['dir']}" for r in cfg["repos"]]},
+        "permissions": {"additionalDirectories": [hl.repo_ref(r) for r in cfg["repos"]]},
         "hooks": {
             "PreToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
                             "hooks": [{"type": "command", "command": cmd("guard-rules.py")}]}],
@@ -466,18 +466,33 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
     slug = cfg["project"]["slug"]
     pdir = f"plugins/{slug}"
     produced: List[str] = []
+    old, repos, protected = [], {}, []
+    mpath = root / MANIFEST
+    first = not mpath.is_file()
+    if not first:
+        try:
+            prev = json.loads(mpath.read_text(encoding="utf-8"))
+            old, repos = prev.get("files", []), dict(prev.get("repos") or {})
+            protected = list(prev.get("protected") or [])
+        except ValueError:
+            old = []
+    # 처음 생성할 때 이미 있던 파일(기존 폴더 연결 · --force)은 사람 것이다: 덮지 않고 기록해 두고 다음에도 덮지 않는다
+    w.protect = set(protected)
+    w.first_run = first
 
     def managed(rel, text, executable=False):
-        produced.append(rel)
-        w.managed(rel, text, executable)
+        if w.guard(rel):
+            produced.append(rel)
+            w.managed(rel, text, executable)
 
     # 엔진과 진입 래퍼: 템플릿 저장소 자신에서 돌면(같은 경로) 그대로 둔다.
     if root.resolve() != TEMPLATE_ROOT.resolve():
         for src in engine_files():
             rel = "harness/" + src.relative_to(ENGINE_ROOT).as_posix()
-            w.copy(src, rel)
+            if w.guard(rel):
+                w.copy(src, rel)
         for name in ROOT_ENTRY_FILES:
-            if (TEMPLATE_ROOT / name).is_file():
+            if (TEMPLATE_ROOT / name).is_file() and w.guard(name):
                 w.copy(TEMPLATE_ROOT / name, name)
 
     w.mixed("CLAUDE.md", claude_md(cfg, ctx))
@@ -489,8 +504,9 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
     managed(f"{pdir}/config.json", jdump(plugin_config(cfg)))
     managed(f"{pdir}/hooks/hooks.json", jdump(plugin_hooks(cfg)))
     for name in plugin_scripts(cfg):
-        produced.append(f"{pdir}/scripts/{name}")
-        w.copy(SKELETON / "plugin" / "scripts" / name, f"{pdir}/scripts/{name}")
+        if w.guard(f"{pdir}/scripts/{name}"):
+            produced.append(f"{pdir}/scripts/{name}")
+            w.copy(SKELETON / "plugin" / "scripts" / name, f"{pdir}/scripts/{name}")
     w.mixed(f"{pdir}/core.md", core_md(cfg, ctx))
     managed(f"{pdir}/agents/researcher.md", researcher_md(cfg))
     managed(f"{pdir}/agents/reviewer.md", reviewer_md(cfg))
@@ -528,21 +544,14 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
                     codex_agent_toml(cfg, f"{r['key']}-worker", f"{r['dir']} 저장소 과제를 구현하고 검증하는 작업자"))
     if hl.orca_on(cfg):
         for src in sorted((SKELETON / "orca").glob("*.sh")):
-            produced.append(f"scripts/{src.name}")
-            w.copy(src, f"scripts/{src.name}")
+            if w.guard(f"scripts/{src.name}"):
+                produced.append(f"scripts/{src.name}")
+                w.copy(src, f"scripts/{src.name}")
 
     w.seed("상황판.md", board_md(cfg, ctx))
     w.seed("docs/기록/README.md", records_readme(cfg, ctx))
 
     # 설정이 바뀌어 필요 없어진 관리 파일 지우기
-    old, repos = [], {}
-    mpath = root / MANIFEST
-    if mpath.is_file():
-        try:
-            prev = json.loads(mpath.read_text(encoding="utf-8"))
-            old, repos = prev.get("files", []), dict(prev.get("repos") or {})
-        except ValueError:
-            old = []
     # 이 하네스가 새로 만든 코드 저장소: 폴더 → 첫 커밋 SHA(아직 커밋 전이면 빈 문자열). 남의 저장소 판별에 쓴다
     for d, sha in (created_repos or {}).items():
         if not repos.get(d):
@@ -554,7 +563,8 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
             if not dry_run:
                 target.unlink()
     w.managed(MANIFEST, jdump({"note": "생성기가 만든 관리 파일 목록과 이 하네스가 만든 저장소. 고치지 않는다.",
-                               "files": sorted(produced), "repos": dict(sorted(repos.items()))}))
+                               "files": sorted(produced), "repos": dict(sorted(repos.items())),
+                               "protected": sorted(w.protect)}))
     return w
 
 

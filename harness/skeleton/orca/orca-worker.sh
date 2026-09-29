@@ -24,7 +24,7 @@ case " $engines " in *" $agent "*) ;; *) echo "이 하네스가 쓰지 않는 �
 repo="$1"; name="$2"; spec="$3"
 [ "${spec:0:1}" = "@" ] && spec="$(cat "${spec:1}")"
 info="$(repo_info "$repo")" || { echo "모르는 저장소: $repo (harness.json 에 없다)"; exit 2; }
-dir="${info% *}"; base="origin/${info#* }"
+read -r dir base_name local_path <<< "$info"; base="origin/$base_name"
 spec="$spec
 
 ---
@@ -35,8 +35,9 @@ spec="$spec
 if [ -n "$base_ref" ]; then
   common="$(git -C "$HARNESS_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$HARNESS_ROOT/.git")"
   projects="${ORCA_PROJECTS_DIR:-$(cd "$(dirname "$common")/.." && pwd)}"
-  git -C "$projects/$dir" rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null || {
-    echo "기준 ref 없음: $projects/$dir 에 '$base_ref' 가 없다. 멈춘다."; exit 2; }
+  repo_dir="${local_path:-$projects/$dir}"   # 연결한 저장소는 그 경로 그대로
+  git -C "$repo_dir" rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null || {
+    echo "기준 ref 없음: $repo_dir 에 '$base_ref' 가 없다. 멈춘다."; exit 2; }
   base="$base_ref"
 fi
 

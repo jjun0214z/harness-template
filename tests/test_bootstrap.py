@@ -177,8 +177,8 @@ class Interactive(unittest.TestCase):
         self.addCleanup(sb.cleanup)
         target = sb.projects / "orchestrator"
         answers = "\n".join([
-            "Quiz 앱", "quiz", "quiz-org", "팀장님", "orchestrator", "main",   # 1 프로젝트
-            "app", "", "", "", "develop", "모바일 앱", "1",                      # 2 키 · 폴더 · 새로 만들기 · 원격 · 브랜치 · 설명 · 스택 node
+            "Quiz 앱", "quiz", "quiz-org", "팀장님", "1", "orchestrator", "main",   # 1 프로젝트 · 하네스 새로 만들기
+            "app", "1", "", "", "develop", "모바일 앱", "1",                      # 2 키 · 새로 만들기 · 폴더 · 원격 · 브랜치 · 설명 · 스택 node
             "develop=dev 배포,main=상용 배포", "main", "",                       #   배포 · 물을 브랜치 · 검사(스택 기본값)
             "",                                                                   # 저장소 끝
             "y", "n", "n", "y",                                                   # 3 채울 자리 틀

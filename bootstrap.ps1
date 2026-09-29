@@ -3,6 +3,7 @@
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $env:HARNESS_CALLER_CWD) { $env:HARNESS_CALLER_CWD = (Get-Location).Path }   # 프로젝트는 실행한 폴더 아래 <슬러그>\ 에
 $script = Join-Path $here 'harness\scripts\bootstrap.py'
 $candidates = @(@('py', '-3'), @('python3'), @('python'))
 foreach ($c in $candidates) {

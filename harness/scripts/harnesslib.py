@@ -53,7 +53,7 @@ def default_config() -> dict:
     return {
         "version": 1,
         "project": {"name": "", "slug": "", "github_org": "", "owner_title": "대표님"},
-        "harness_repo": {"dir": "orchestrator", "remote": "", "base_branch": "main"},
+        "harness_repo": {"dir": "orchestrator", "remote": "", "base_branch": "main", "source": "new", "path": ""},
         "repos": [],
         "skills": {"fill": list(FILL_SKILLS)},
         "engines": ["claude"],
@@ -78,11 +78,22 @@ def normalize(raw: dict) -> dict:
         cfg["orca"] = {"enabled": cfg["orca"], "workspaces_dir": "~/orca/workspaces"}
     org = cfg["project"].get("github_org") or ""
     hr = cfg["harness_repo"]
+    if hr.get("source") == "local" and hr.get("path"):
+        hr["path"] = str(Path(os.path.expanduser(hr["path"])).resolve())
+        hr["dir"] = Path(hr["path"]).name
     if not hr.get("remote") and org:
         hr["remote"] = f"{org}/{hr.get('dir') or 'orchestrator'}"
     repos = []
     for r in cfg.get("repos") or []:
         r = dict(r)
+        if r.get("source") == "local" and r.get("path"):
+            # 이미 이 컴퓨터에 있는 폴더 연결: 폴더 이름 · 기준 브랜치 · 원격은 그 저장소에서 읽는다(옮기거나 고치지 않는다)
+            r["path"] = str(Path(os.path.expanduser(r["path"])).resolve())
+            r.setdefault("dir", Path(r["path"]).name)
+            r.setdefault("base_branch", detect_base_branch(Path(r["path"])) or "main")
+            if not r.get("remote"):
+                r["remote"] = github_remote(Path(r["path"])) or ""
+            r.setdefault("connect_files", False)
         r.setdefault("dir", r.get("key", ""))
         if not r.get("remote") and org:
             r["remote"] = f"{org}/{r.get('key', '')}"
@@ -95,6 +106,7 @@ def normalize(raw: dict) -> dict:
         r.setdefault("url", "")
         # 기본은 새로 만든다. url 을 적었거나 source=clone 이면 기존 원격을 받는다.
         r.setdefault("source", "clone" if r["url"] else "new")
+        r.setdefault("path", "")
         repos.append(r)
     cfg["repos"] = repos
     if not cfg["platform"].get("python"):
@@ -113,6 +125,10 @@ def validate(cfg: dict) -> List[str]:
     if not (p.get("owner_title") or "").strip():
         errs.append("project.owner_title(결정권자를 부르는 호칭)이 비었다")
     hr = cfg.get("harness_repo") or {}
+    if hr.get("source", "new") not in ("new", "local"):
+        errs.append("harness_repo.source 는 new(새로 만들기) 또는 local(기존 폴더 연결)이다")
+    if hr.get("source") == "local" and not hr.get("path"):
+        errs.append("harness_repo 는 local 인데 path 가 없다")
     if not safe_dir_name(hr.get("dir") or ""):
         errs.append("harness_repo.dir 이 폴더 이름으로 쓸 수 없다")
     if not BRANCH_RE.match(hr.get("base_branch") or ""):
@@ -145,8 +161,10 @@ def validate(cfg: dict) -> List[str]:
             errs.append(f"{where} 는 clone 인데 remote(또는 url) 가 없다")
         if r.get("stack") not in STACKS:
             errs.append(f"{where}.stack 은 {', '.join(STACKS)} 중 하나다")
-        if r.get("source") not in ("new", "clone"):
-            errs.append(f"{where}.source 는 new(새로 만들기) 또는 clone(기존 원격 받기)이다")
+        if r.get("source") not in ("new", "clone", "local"):
+            errs.append(f"{where}.source 는 new(새로 만들기) · clone(원격 받기) · local(이 컴퓨터의 폴더 연결) 중 하나다")
+        if r.get("source") == "local" and not r.get("path"):
+            errs.append(f"{where} 는 local 인데 path(연결할 폴더)가 없다")
         if not isinstance(r.get("deploy"), dict):
             errs.append(f"{where}.deploy 는 {{브랜치: 의미}} 다")
         for k in ("ask_on_push", "checks"):
@@ -189,6 +207,41 @@ def dump_config(cfg: dict) -> str:
 
 def all_dirs(cfg: dict) -> List[str]:
     return [cfg["harness_repo"]["dir"]] + [r["dir"] for r in cfg["repos"]]
+
+
+def repo_path(repo: dict, parent: Path) -> Path:
+    """저장소 폴더. 연결(local)이면 그 경로 그대로(프로젝트 루트 밖이어도 된다), 아니면 프로젝트 루트 아래."""
+    if repo.get("source") == "local" and repo.get("path"):
+        return Path(repo["path"])
+    return Path(parent) / repo["dir"]
+
+
+def repo_ref(repo: dict) -> str:
+    """문서에 적는 자리: 연결이면 절대 경로, 아니면 하네스 옆 ../<폴더>."""
+    return repo["path"] if repo.get("source") == "local" and repo.get("path") else f"../{repo['dir']}"
+
+
+def _git_out(path: Path, *args) -> str:
+    try:
+        r = subprocess.run(["git", "-C", str(path), *args], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def detect_base_branch(path: Path) -> str:
+    """그 저장소의 기본 브랜치: origin/HEAD 가 가리키는 것, 없으면 지금 브랜치."""
+    head = _git_out(path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    if head.startswith("origin/"):
+        return head[len("origin/"):]
+    cur = _git_out(path, "symbolic-ref", "--short", "HEAD")
+    return cur
+
+
+def github_remote(path: Path) -> str:
+    url = _git_out(path, "remote", "get-url", "origin")
+    m = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    return f"{m.group(1)}/{m.group(2)}" if m else ""
 
 
 def repo_url(repo: dict) -> str:
@@ -410,6 +463,17 @@ class Writer:
         self.dry_run = dry_run
         self.changed: List[str] = []
         self.kept: List[str] = []
+        self.protect: set = set()     # 사람 파일이라 덮지 않는 경로
+        self.first_run = False
+
+    def guard(self, rel: str) -> bool:
+        """써도 되나. 처음 생성할 때 이미 있던 파일(사람 것)은 보호 목록에 넣고 쓰지 않는다."""
+        if rel in self.protect:
+            return False
+        if self.first_run and (self.root / rel).exists():
+            self.protect.add(rel)
+            return False
+        return True
 
     def _write(self, rel: str, text: str, executable: bool = False) -> None:
         path = self.root / rel

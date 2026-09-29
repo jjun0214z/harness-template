@@ -14,16 +14,17 @@ find_orca() {
 ORCA="$(find_orca)"
 # harness.json 조회: cfg '<파이썬 식>' (c = 설정 dict)
 cfg() { "$PY" -c "import json,sys; c=json.load(open(sys.argv[1],encoding='utf-8')); print($1)" "$HARNESS_ROOT/harness.json"; }
-# 저장소 키 또는 폴더 → "폴더 기준브랜치". 하네스 자신은 key 'harness' 또는 폴더 이름.
+# 저장소 키 또는 폴더 → "폴더 기준브랜치 [연결 경로]". 하네스 자신은 key 'harness' 또는 폴더 이름.
 repo_info() {
   "$PY" - "$HARNESS_ROOT/harness.json" "$1" <<'PYEOF'
 import json, sys
 c = json.load(open(sys.argv[1], encoding="utf-8")); want = sys.argv[2]
 h = c["harness_repo"]
-rows = [("harness", h["dir"], h.get("base_branch", "main"))] + [(r["key"], r.get("dir") or r["key"], r.get("base_branch", "main")) for r in c["repos"]]
-for key, d, base in rows:
+rows = [("harness", h["dir"], h.get("base_branch", "main"), h.get("path", "") if h.get("source") == "local" else "")]
+rows += [(r["key"], r.get("dir") or r["key"], r.get("base_branch", "main"), r.get("path", "") if r.get("source") == "local" else "") for r in c["repos"]]
+for key, d, base, path in rows:
     if want in (key, d):
-        print(d, base); break
+        print(d, base, path); break
 else:
     sys.exit(1)
 PYEOF

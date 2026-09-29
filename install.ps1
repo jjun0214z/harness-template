@@ -16,7 +16,13 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $TemplateUrl = if ($env:HARNESS_TEMPLATE_URL) { $env:HARNESS_TEMPLATE_URL } else { 'https://github.com/jjun0214z/harness-template.git' }
 $ZipUrl = if ($env:HARNESS_ZIP_URL) { $env:HARNESS_ZIP_URL } else { 'https://codeload.github.com/jjun0214z/harness-template/zip/refs/heads/main' }
-$Dir = if ($env:HARNESS_DIR) { $env:HARNESS_DIR } else { Join-Path $HOME 'harness-template' }
+# 실행한 셸의 현재 폴더: 프로젝트는 여기 아래 <슬러그>\ 에 만든다
+if (-not $env:HARNESS_CALLER_CWD) { $env:HARNESS_CALLER_CWD = (Get-Location).Path }
+# 템플릿 원본은 숨김 폴더. 예전 자리(~\harness-template)가 있으면 그것을 그대로 쓴다
+$legacy = Join-Path $HOME 'harness-template'
+$Dir = if ($env:HARNESS_DIR) { $env:HARNESS_DIR }
+       elseif ((Test-Path (Join-Path $legacy '.git')) -or (Test-Path (Join-Path $legacy '.harness-template'))) { $legacy }
+       else { Join-Path $HOME '.harness-template' }
 $NodeMajor = 22
 $Yes = $env:HARNESS_YES -eq '1'
 $Dry = $env:HARNESS_DRY_RUN -eq '1'
@@ -80,7 +86,7 @@ else {
 $isTemplate = (Test-Path (Join-Path $Dir '.git')) -or (Test-Path (Join-Path $Dir '.harness-template'))
 if ($isTemplate) { Add-Plan '템플릿' $Dir '갱신' '-' } else { Add-Plan '템플릿' '없음' '받기' $Dir }
 
-Write-Host '하네스 템플릿 설치 (windows)'
+Write-Host "하네스 템플릿 설치 (windows) · 프로젝트는 $($env:HARNESS_CALLER_CWD)\<프로젝트 슬러그> 에 만든다"
 Write-Host ''
 Write-Host '| 도구 | 찾은 버전 | 할 일 | 명령 |'
 Write-Host '| --- | --- | --- | --- |'

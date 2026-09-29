@@ -8,7 +8,8 @@
 #       → 템플릿 받기(git clone, git 이 없으면 tar.gz) · 이미 있으면 갱신 → bootstrap.py 실행
 # 이미 있는 도구는 건너뛰고, 모자란 버전은 쓰던 관리자(nvm · fnm)로 올린다. 기존 설치는 지우지 않는다.
 #
-# 옵션: --yes(무인 동의) · --dry-run(할 일만 출력) · --no-run(받기까지만) · --dir <폴더>(기본 ~/harness-template)
+# 옵션: --yes(무인 동의) · --dry-run(할 일만 출력) · --no-run(받기까지만) · --dir <폴더>(템플릿 원본, 기본 ~/.harness-template)
+# 프로젝트는 이 명령을 실행한 폴더 아래 <프로젝트 슬러그>/ 에 만든다(bootstrap 의 --root 로 바꿀 수 있다).
 #       -- 뒤는 bootstrap.py 로 넘긴다(기본 run).
 # 시험용 환경변수: HARNESS_OS(mac|linux) · HARNESS_TEMPLATE_URL · HARNESS_TARBALL_URL · HARNESS_DIR · HARNESS_NO_TTY · HARNESS_PATH_ONLY
 #
@@ -20,7 +21,12 @@ main() {
 
 TEMPLATE_URL="${HARNESS_TEMPLATE_URL:-https://github.com/jjun0214z/harness-template.git}"
 TARBALL_URL="${HARNESS_TARBALL_URL:-https://codeload.github.com/jjun0214z/harness-template/tar.gz/refs/heads/main}"
-DIR="${HARNESS_DIR:-$HOME/harness-template}"
+# 실행한 셸의 현재 폴더: 프로젝트는 여기 아래 <슬러그>/ 에 만든다. 아무것도 하기 전에 적어 둔다
+export HARNESS_CALLER_CWD="${HARNESS_CALLER_CWD:-$PWD}"
+# 템플릿 원본은 숨김 폴더. 예전 자리(~/harness-template)가 있으면 그것을 그대로 쓴다
+if [ -n "${HARNESS_DIR:-}" ]; then DIR="$HARNESS_DIR"
+elif [ -d "$HOME/harness-template/.git" ] || [ -f "$HOME/harness-template/.harness-template" ]; then DIR="$HOME/harness-template"; LEGACY=1
+else DIR="$HOME/.harness-template"; fi
 NODE_MAJOR=22
 YES=0; DRY=0; NORUN=0
 BOOT_ARGS=()
@@ -118,7 +124,8 @@ if [ "$PKG" = apt ]; then
   done
 fi
 
-say "하네스 템플릿 설치 ($OS)"
+say "하네스 템플릿 설치 ($OS) · 프로젝트는 $HARNESS_CALLER_CWD/<프로젝트 슬러그> 에 만든다"
+[ "${LEGACY:-0}" = 1 ] && say "(예전 자리 $DIR 의 템플릿을 그대로 쓴다. 새로 받으면 ~/.harness-template 에 둔다)"
 say ""
 say "| 도구 | 찾은 버전 | 할 일 | 명령 |"
 say "| --- | --- | --- | --- |"

@@ -105,20 +105,29 @@ def ask_yes(prompt: str, default: bool, reader: Callable[[str], str] = input, on
     return ans in ("y", "yes", "예", "네", "ㅇ")
 
 
-def interview(kind: str, reader: Callable[[str], str] = input) -> dict:
+def interview(kind: str, reader: Callable[[str], str] = input, default_root=None) -> dict:
     """네 묶음 질문 → 설정 dict."""
     cfg = hl.default_config()
     say("\n[1/4] 프로젝트")
     p = cfg["project"]
     p["name"] = ask("프로젝트 이름", "", reader)
     p["slug"] = ask("영문 슬러그(플러그인 이름, 소문자 · 숫자 · -)", re.sub(r"[^a-z0-9-]", "", p["name"].lower().replace(" ", "-")) or "myproject", reader)
+    if default_root is not None:
+        here = default_root(None, {"project": {"slug": p["slug"]}})
+        cfg["_root"] = ask(f"여기에 만듭니다: {here}  (Enter = 그대로, 다른 경로 입력)", str(here), reader)
     p["github_org"] = ask("GitHub 조직 또는 사용자(없으면 빈칸: 로컬만 만든다)", "", reader)
     p["owner_title"] = ask("결정권자를 부르는 호칭", "대표님", reader)
     h = cfg["harness_repo"]
-    h["dir"] = ask("하네스 저장소 폴더 이름", "orchestrator", reader)
-    h["base_branch"] = ask("하네스 기준 브랜치", "main", reader)
+    how = ask("하네스 저장소: (1) 새로 만들기 (2) 이 컴퓨터에 있는 폴더 연결", "1", reader)
+    if how == "2":
+        h["source"] = "local"
+        h["path"] = ask("  연결할 하네스 폴더 경로", "", reader)
+        h["base_branch"] = ask("  기준 브랜치", hl.detect_base_branch(Path(os.path.expanduser(h["path"]))) or "main", reader)
+    else:
+        h["dir"] = ask("  하네스 저장소 폴더 이름", "orchestrator", reader)
+        h["base_branch"] = ask("  기준 브랜치", "main", reader)
 
-    say("\n[2/4] 저장소 (빈 키를 넣으면 끝). 기본은 새로 만든다")
+    say("\n[2/4] 저장소 (빈 키를 넣으면 끝). 저장소마다 새로 만들기 · 원격에서 받기 · 이 컴퓨터의 폴더 연결 중 고른다")
     while True:
         key = ask(f"저장소 {len(cfg['repos']) + 1} 키(영문, 작업자 이름 <키>-worker)", "", reader)
         if not key:
@@ -127,12 +136,21 @@ def interview(kind: str, reader: Callable[[str], str] = input) -> dict:
             say("  저장소를 하나 이상 넣는다.")
             continue
         r = {"key": key}
-        r["dir"] = ask("  폴더", key, reader)
-        existing = ask("  기존 원격을 받을 거면 주소(없으면 빈칸: 새로 만든다)", "", reader)
-        if existing:
-            r["source"], r["url"] = "clone", existing
-        r["remote"] = ask("  GitHub 원격(조직/이름, 없으면 빈칸)", f"{p['github_org']}/{key}" if p["github_org"] else "", reader)
-        r["base_branch"] = ask("  기준 브랜치", "main", reader)
+        how = ask("  (1) 새로 만들기 (2) 원격 주소에서 받기(clone) (3) 이 컴퓨터에 있는 폴더 연결", "1", reader)
+        if how == "3":
+            r["source"] = "local"
+            r["path"] = ask("  연결할 폴더 경로(다른 위치여도 된다. 옮기지 않는다)", "", reader)
+            local = Path(os.path.expanduser(r["path"]))
+            r["dir"] = local.name
+            r["remote"] = ask("  GitHub 원격(조직/이름)", hl.github_remote(local), reader)
+            r["base_branch"] = ask("  기준 브랜치(그 저장소의 기본 브랜치)", hl.detect_base_branch(local) or "main", reader)
+            r["connect_files"] = ask_yes("  작업자용 최소 파일(CLAUDE.md · AGENTS.md · .claude/settings.json)을 없는 것만 더할까", False, reader)
+        else:
+            if how == "2":
+                r["source"], r["url"] = "clone", ask("  원격 주소", "", reader)
+            r["dir"] = ask("  폴더", key, reader)
+            r["remote"] = ask("  GitHub 원격(조직/이름, 없으면 빈칸)", f"{p['github_org']}/{key}" if p["github_org"] else "", reader)
+            r["base_branch"] = ask("  기준 브랜치", "main", reader)
         r["description"] = ask("  한 줄 설명", "", reader)
         stack = ask("  스택 (1) node/pnpm (2) python (3) 없음", "3", reader)
         r["stack"] = {"1": "node", "2": "python"}.get(stack, "none")
@@ -394,12 +412,49 @@ def repo_skeleton(cfg: dict, r: dict) -> dict:
     return files
 
 
+def connect_files(cfg: dict, r: dict) -> dict:
+    """연결한 저장소에 (동의했을 때만) 더하는 최소 파일. 있으면 덮지 않는다."""
+    files = {k: v for k, v in repo_skeleton(cfg, r).items() if k in ("CLAUDE.md", "AGENTS.md", ".claude/settings.json")}
+    return files
+
+
+def connect_repo(cfg: dict, r: dict, dest: Path, rep: Report) -> None:
+    """이미 이 컴퓨터에 있는 저장소 연결. 코드 · 이력 · 원격 · 브랜치는 건드리지 않는다."""
+    label = f"저장소 {r['dir']}"
+    if not (dest / ".git").exists():
+        rep.add(label, "실패", f"연결할 git 저장소가 없다: {dest}")
+        return
+    added, kept = [], []
+    if r.get("connect_files"):
+        for rel, text in connect_files(cfg, r).items():
+            path = dest / rel
+            if path.exists():
+                kept.append(rel)
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(text)
+            added.append(rel)
+    detail = f"연결(코드 · 이력 · 원격 · 브랜치 그대로) {dest}"
+    if added:
+        detail += f" · 더한 파일 {', '.join(added)}"
+        rep.todo(f"{r['dir']}: 더한 파일({', '.join(added)})을 검토하고 직접 커밋한다")
+    for rel in kept:
+        rep.todo(f"{r['dir']}: {rel} 이 이미 있어 덮지 않았다. 필요하면 {cfg['project']['slug']} 플러그인 켜기 · 하네스 안내를 직접 합친다")
+    if not r.get("connect_files"):
+        rep.todo(f"{r['dir']}: 작업자용 최소 파일(CLAUDE.md · AGENTS.md · .claude/settings.json)은 더하지 않았다. 원하면 harness.json 에 connect_files: true 로 다시 실행")
+    rep.add(label, "통과", detail)
+
+
 def repos_step(cfg: dict, parent: Path, rep: Report, offline: bool, record: dict) -> dict:
     """저장소를 준비하고, 이번에 새로 만든 저장소의 {폴더: 첫 커밋 SHA} 를 돌려준다."""
     created = {}
     for r in cfg["repos"]:
-        dest = parent / r["dir"]
+        dest = hl.repo_path(r, parent)
         label = f"저장소 {r['dir']}"
+        if r["source"] == "local":
+            connect_repo(cfg, r, dest, rep)
+            continue
         if (dest / ".git").exists():
             if r["source"] == "clone" and (not offline or is_local_url(hl.repo_url(r))):
                 run(["git", "-C", str(dest), "fetch", "--prune", "--quiet", "origin"], timeout=300)
@@ -445,10 +500,10 @@ def repos_step(cfg: dict, parent: Path, rep: Report, offline: bool, record: dict
 def remote_step(cfg: dict, target: Path, parent: Path, rep: Report, offline: bool, create: bool) -> None:
     """원격 연결. origin 이 있으면 건드리지 않는다. gh 가 있고 --create-github 면 없는 원격을 만들고 push, 있으면 연결만."""
     rows = [(cfg["harness_repo"]["dir"], target, cfg["harness_repo"].get("remote"), cfg["harness_repo"]["base_branch"])]
-    rows += [(r["dir"], parent / r["dir"], r.get("remote"), r["base_branch"]) for r in cfg["repos"] if r["source"] == "new"]
+    rows += [(r["dir"], hl.repo_path(r, parent), r.get("remote"), r["base_branch"]) for r in cfg["repos"] if r["source"] == "new"]
     record = created_record(target)
-    foreign = {r["dir"] for r in cfg["repos"] if r["source"] == "new" and (parent / r["dir"] / ".git").exists()
-               and not made_by_us(parent / r["dir"], record)}
+    foreign = {r["dir"] for r in cfg["repos"] if r["source"] == "new" and (hl.repo_path(r, parent) / ".git").exists()
+               and not made_by_us(hl.repo_path(r, parent), record)}
     gh = shutil.which("gh")
     gh_ok = bool(gh) and not offline and logged_in("gh", hl.os_kind()) is True
     if not offline:
@@ -501,7 +556,7 @@ def codex_config_lines(cfg: dict, target: Path, parent: Path) -> List[Tuple[str,
     slug = cfg["project"]["slug"]
     blocks = [(f"[marketplaces.{slug}-local]",
                f"[marketplaces.{slug}-local]\nsource_type = \"local\"\nsource = {gen.toml_str(str(target.resolve()))}\n")]
-    for p in [target] + [parent / r["dir"] for r in cfg["repos"]]:
+    for p in [target] + [hl.repo_path(r, parent) for r in cfg["repos"]]:
         header = f"[projects.{gen.toml_str(str(p.resolve()))}]"
         blocks.append((header, f"{header}\ntrust_level = \"trusted\"\n"))
     return blocks
@@ -544,7 +599,7 @@ def install_step(cfg: dict, target: Path, parent: Path, kind: str, rep: Report) 
             # 하네스는 커밋된 .claude/settings.json 이 켠다. 코드 저장소는 local 범위(커밋 안 되는 settings.local.json).
             bad = [] if run([claude, "plugin", "install", f"{slug}@{slug}", "--scope", "project"], cwd=target, timeout=120)[0] == 0 else [cfg["harness_repo"]["dir"]]
             for r in cfg["repos"]:
-                d = parent / r["dir"]
+                d = hl.repo_path(r, parent)
                 if d.is_dir() and run([claude, "plugin", "install", f"{slug}@{slug}", "--scope", "local"], cwd=d, timeout=120)[0] != 0:
                     bad.append(r["dir"])
             if ok and not bad:
@@ -583,7 +638,7 @@ def orca_step(cfg: dict, target: Path, parent: Path, kind: str, rep: Report) -> 
     except ValueError:
         known = set()
     rows = [(cfg["harness_repo"]["dir"], target, cfg["harness_repo"]["base_branch"])]
-    rows += [(r["dir"], parent / r["dir"], r["base_branch"]) for r in cfg["repos"]]
+    rows += [(r["dir"], hl.repo_path(r, parent), r["base_branch"]) for r in cfg["repos"]]
     bad, added = [], 0
     for name, path, base in rows:
         if not path.is_dir():
@@ -710,7 +765,7 @@ def doctor(target: Path, kind: str, offline: bool, rep: Optional[Report] = None,
         rep.add("생성물", "실패", "생성 기록이 없다. generate 를 돌린다")
     hook_smoke(cfg, target, rep)
     parent = hl.git_common_parent(target) or target.parent
-    for p, name in [(target, cfg["harness_repo"]["dir"])] + [(parent / r["dir"], r["dir"]) for r in cfg["repos"]]:
+    for p, name in [(target, cfg["harness_repo"]["dir"])] + [(hl.repo_path(r, parent), r["dir"]) for r in cfg["repos"]]:
         if not (p / ".git").exists():
             rep.add(f"저장소 {name}", "없음", str(p))
             continue
@@ -738,13 +793,47 @@ def doctor(target: Path, kind: str, offline: bool, rep: Optional[Report] = None,
 
 # ---------------------------------------------------------------- 명령
 
+def caller_base() -> Path:
+    """install · bootstrap 을 실행한 셸의 현재 폴더. install.sh 가 cd 하기 전에 HARNESS_CALLER_CWD 로 넘긴다.
+    템플릿 폴더 안에서 실행했으면 템플릿 옆(템플릿 안에 프로젝트를 만들지 않는다)."""
+    base = Path(os.environ.get("HARNESS_CALLER_CWD") or os.getcwd()).expanduser().resolve()
+    tpl = TEMPLATE_ROOT.resolve()
+    if base == tpl or tpl in base.parents:
+        return tpl.parent
+    return base
+
+
+def project_root(args, cfg: Optional[dict]) -> Path:
+    """프로젝트 루트 = --root, 없으면 <실행한 폴더>/<프로젝트 슬러그>. 그 안에 하네스와 새 저장소들."""
+    if getattr(args, "root", None):
+        return Path(args.root).expanduser().resolve()
+    slug = cfg["project"]["slug"] if cfg else "project"
+    return caller_base() / slug
+
+
 def resolve_target(args, cfg: Optional[dict]) -> Path:
     if getattr(args, "target", None):
         return Path(args.target).expanduser().resolve()
+    if cfg and cfg["harness_repo"].get("source") == "local":
+        return Path(cfg["harness_repo"]["path"])
     if (TEMPLATE_ROOT / hl.CONFIG_NAME).is_file() and not (TEMPLATE_ROOT / hl.TEMPLATE_MARK_FILE).is_file():
-        return TEMPLATE_ROOT
+        return TEMPLATE_ROOT  # 생성된 하네스 안의 엔진으로 돈다: 여기가 하네스
+    if not cfg and (Path.cwd() / hl.CONFIG_NAME).is_file():
+        return Path.cwd().resolve()  # doctor · generate 를 하네스 폴더에서 부른 경우
     name = cfg["harness_repo"]["dir"] if cfg else "orchestrator"
-    return (TEMPLATE_ROOT.parent / name).resolve()
+    return project_root(args, cfg) / name
+
+
+def root_problem(root: Path, cfg: dict, force: bool) -> Optional[str]:
+    """프로젝트 루트가 이미 있고 하네스 · 저장소 말고 다른 것이 있으면 멈춘다(harness.json 이 있으면 우리 프로젝트)."""
+    if not root.is_dir() or (root / cfg["harness_repo"]["dir"] / hl.CONFIG_NAME).is_file() or force:
+        return None
+    allowed = {cfg["harness_repo"]["dir"], ".DS_Store", ".work"} | {r["dir"] for r in cfg["repos"]}
+    extra = sorted(p.name for p in root.iterdir() if p.name not in allowed)
+    if extra:
+        return (f"프로젝트 루트 {root} 가 이미 있고 하네스 표시(harness.json)가 없는데 다른 것이 있다({', '.join(extra[:5])}). "
+                "섞지 않도록 멈춘다. --root 로 다른 폴더를 주거나 그래도 여기면 --force")
+    return None
 
 
 def load_or_ask(args, kind: str) -> dict:
@@ -756,7 +845,10 @@ def load_or_ask(args, kind: str) -> dict:
         return hl.load_config(TEMPLATE_ROOT / hl.CONFIG_NAME)
     if args.non_interactive:
         raise hl.ConfigError("--non-interactive 에는 --config 가 필요하다")
-    cfg = interview(kind)
+    cfg = interview(kind, default_root=None if (args.root or args.target) else project_root)
+    chosen = cfg.pop("_root", None)
+    if chosen and not args.target:
+        args.root = chosen
     errs = hl.validate(cfg)
     if errs:
         raise hl.ConfigError("설정 오류:\n- " + "\n- ".join(errs))
@@ -771,17 +863,25 @@ def cmd_run(args) -> int:
         hl.eprint(exc)
         return 2
     target = resolve_target(args, cfg)
+    if not args.target and cfg["harness_repo"].get("source") != "local" and not (target / hl.CONFIG_NAME).is_file():
+        problem = root_problem(project_root(args, cfg), cfg, args.force)
+        if problem:
+            hl.eprint(problem)
+            return 2
     if target.resolve() == TEMPLATE_ROOT.resolve() and (TEMPLATE_ROOT / hl.TEMPLATE_MARK_FILE).is_file():
         hl.eprint("템플릿 저장소 자신에 하네스를 만들지 않는다. --target 으로 새 프로젝트 하네스 폴더를 준다")
         return 2
-    reason = target_problem(target, args.force)
+    reason = None if cfg["harness_repo"].get("source") == "local" else target_problem(target, args.force)
+    if cfg["harness_repo"].get("source") == "local" and not (target / ".git").exists():
+        reason = f"하네스로 연결할 git 저장소가 없다: {target}"
     if reason:
         hl.eprint(reason)
         return 2
     rep = Report()
-    say(f"하네스 폴더: {target}  (템플릿 원본: {TEMPLATE_ROOT})")
+    say(f"하네스 폴더: {target}  (프로젝트 루트: {target.parent} · 템플릿 원본: {TEMPLATE_ROOT})")
     tools_step(cfg, kind, rep, yes=args.yes, interactive=not args.non_interactive)
-    created = not (target / ".git").exists() or (not has_commit(target) and not (target / hl.CONFIG_NAME).is_file())
+    created = cfg["harness_repo"].get("source") != "local" and (
+        not (target / ".git").exists() or (not has_commit(target) and not (target / hl.CONFIG_NAME).is_file()))
     if not (target / ".git").exists():
         git_init(target, cfg["harness_repo"]["base_branch"])
     elif created:  # 먼저 git init 만 해 둔 빈 저장소: 기준 브랜치 이름을 맞춘다
@@ -795,7 +895,11 @@ def cmd_run(args) -> int:
     parent = hl.git_common_parent(target) or target.parent
     new_repos = repos_step(cfg, parent, rep, args.offline, created_record(target))
     w = gen.generate(cfg, target, created_repos=new_repos)
-    rep.add("생성", "통과", f"바뀐 파일 {len(w.changed)} · 사람이 채운 파일 유지 {len(w.kept)}")
+    rep.add("생성", "통과", f"바뀐 파일 {len(w.changed)} · 사람이 채운 파일 유지 {len(w.kept)} · 원래 있던 파일 보호 {len(w.protect)}")
+    for rel in sorted(w.protect):
+        rep.todo(f"하네스 {rel} 은 원래 있던 파일이라 덮지 않았다. 템플릿 내용(harness/skeleton 또는 새 폴더에 생성해 본 것)과 직접 합친다")
+    if cfg["harness_repo"].get("source") == "local":
+        rep.todo(f"하네스 연결: {target} 에 더한 파일을 git status 로 보고 경로를 명시해 커밋한다")
     if created:
         made = [f for f in w.changed if not f.startswith("(지움)")] + w.kept + [hl.CONFIG_NAME, gen.MANIFEST]
         first_commit(target, HARNESS_COMMIT, rep, cfg["harness_repo"]["dir"], made)
@@ -887,7 +991,8 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", help="harness.json 경로")
-    common.add_argument("--target", help="새 프로젝트 하네스 폴더(기본: 템플릿 옆 <harness_repo.dir>)")
+    common.add_argument("--root", help="프로젝트 루트(기본: 실행한 폴더/<프로젝트 슬러그>). 그 안에 하네스와 새 저장소를 만든다")
+    common.add_argument("--target", help="하네스 폴더를 직접 준다(기본: <프로젝트 루트>/<harness_repo.dir>)")
     common.add_argument("--offline", action="store_true", help="gh 를 부르지 않고 원격 clone · fetch 를 건너뛴다(로컬 경로 원격은 받는다)")
     common.add_argument("--yes", "--install-tools", dest="yes", action="store_true", help="도구 표의 설치 · 올림에 동의한 것으로 본다(무인 진행)")
     p = sub.add_parser("run", parents=[common], help="끝까지 셋업")

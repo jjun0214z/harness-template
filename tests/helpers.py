@@ -87,7 +87,7 @@ class Sandbox:
                 sys_dirs.append(os.path.dirname(found))
         path = os.pathsep.join([str(self.bin)] + list(dict.fromkeys(sys_dirs)))
         env = {k: v for k, v in os.environ.items()
-               if not k.startswith(("CLAUDE", "CODEX", "ORCA", "NVM", "FNM", "PLUGIN_ROOT"))}
+               if not k.startswith(("CLAUDE", "CODEX", "ORCA", "NVM", "FNM", "PLUGIN_ROOT", "HARNESS_", "PWD"))}
         env.update(HOME=str(self.home), USERPROFILE=str(self.home), PATH=path, HARNESS_PATH_ONLY="1",
                    FAKE_TOOL_LOG=str(self.log), GIT_CONFIG_NOSYSTEM="1",
                    GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
@@ -131,9 +131,10 @@ class Sandbox:
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
 
-    def bootstrap(self, *args, input_text=None, **env):
+    def bootstrap(self, *args, input_text=None, cwd=None, **env):
+        """cwd 는 기본으로 임시 폴더(프로젝트 루트 기본값이 「실행한 폴더/<슬러그>」라 저장소 안에 만들지 않게)."""
         return subprocess.run([sys.executable, str(BOOTSTRAP), *args], capture_output=True, text=True,
-                              env=self.env(**env), input=input_text, timeout=300)
+                              env=self.env(**env), input=input_text, timeout=300, cwd=str(cwd or self.tmp))
 
     def tool_calls(self):
         if not self.log.exists():

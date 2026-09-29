@@ -9,6 +9,12 @@ irm https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps
 ```
 
 위 한 줄이면 끝이다(macOS · Linux 는 터미널, Windows 는 PowerShell). 내려받기 · 압축 풀기 · GitHub 계정 · gh 는 필요 없다.
+
+| 새 프로젝트를 만든다 | 이미 있는 저장소를 연결한다 |
+| --- | --- |
+| 하네스와 저장소를 새로 만든다(`git init` · 최소 뼈대 · 첫 커밋). GitHub 원격은 원할 때만 | 이 컴퓨터에 있는 폴더를 경로로 고른다(다른 위치여도 된다). 코드 · 이력 · 원격 · 브랜치는 그대로 두고 하네스 쪽 지도 · 작업자에만 넣는다 |
+
+한 프로젝트 안에서 섞어도 된다: 저장소마다 **새로 만들기 · 원격에서 받기 · 이 컴퓨터의 폴더 연결** 중 하나를 고르고, 하네스 저장소도 새로 만들거나 기존 폴더를 연결한다.
 막 산 컴퓨터에서도 돈다: 먼저 무엇이 있고 없는지 표로 보여 주고, 한 번 동의받은 뒤 필요한 것만 설치한다.
 
 에이전트로 할 때: Claude 또는 Codex 에게 **「jjun0214z/harness-template 로 셋업해」**.
@@ -17,14 +23,14 @@ irm https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps
 
 ```sh
 # gh 가 있으면 (보조 경로)
-gh repo clone jjun0214z/harness-template ~/harness-template && bash ~/harness-template/bootstrap.sh
+gh repo clone jjun0214z/harness-template ~/.harness-template && bash ~/.harness-template/bootstrap.sh
 # git 만 있으면
-git clone https://github.com/jjun0214z/harness-template ~/harness-template && bash ~/harness-template/bootstrap.sh
+git clone https://github.com/jjun0214z/harness-template ~/.harness-template && bash ~/.harness-template/bootstrap.sh
 # 무인(설치 동의 포함)
 curl -fsSL https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.sh | bash -s -- --yes
 ```
 ```powershell
-gh repo clone jjun0214z/harness-template $HOME\harness-template; & $HOME\harness-template\bootstrap.ps1
+gh repo clone jjun0214z/harness-template $HOME\.harness-template; & $HOME\.harness-template\bootstrap.ps1
 $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1 | iex
 ```
 </details>
@@ -36,7 +42,7 @@ Claude · Codex(또는 둘 다), Orca 사용 여부를 고를 수 있고 macOS �
 
 | 단계 | 누가 | 무엇 |
 | --- | --- | --- |
-| 1 | `install.sh` · `install.ps1` (파이썬보다 먼저 도는 셸) | 감지 표 → 동의 → 패키지 관리자(mac: 개발자 도구 · brew, Windows: winget, Linux: apt · dnf) · git · python 3.9+ · node 22 → 템플릿을 `~/harness-template` 에 받기(git 이 없으면 압축으로, 있으면 갱신) |
+| 1 | `install.sh` · `install.ps1` (파이썬보다 먼저 도는 셸) | 감지 표 → 동의 → 패키지 관리자(mac: 개발자 도구 · brew, Windows: winget, Linux: apt · dnf) · git · python 3.9+ · node 22 → 템플릿 원본을 `~/.harness-template` 에 받기(git 이 없으면 압축으로, 있으면 갱신. 예전 `~/harness-template` 이 있으면 그것을 쓴다) |
 | 2 | `bootstrap.py run` | 네 묶음 질문(프로젝트 · 저장소 · 규칙 스킬 · 엔진/Orca) → 도구 표 · 동의(pnpm · 고른 엔진 CLI) → 로그인 확인 |
 | 3 | 〃 | 하네스 저장소와 코드 저장소를 **새로 만든다**(`git init -b <기준 브랜치>` · 최소 뼈대 · 첫 커밋). 기존 원격이 있으면 clone 을 고를 수 있다 |
 | 4 | 〃 | 생성기 → 고른 엔진만 플러그인 설치 → (gh 로그인이 있고 원하면) 비공개 원격 저장소 · 라벨 → Orca 를 골랐으면 등록 |
@@ -51,8 +57,8 @@ gh · GitHub 로그인은 **선택**이다. 없으면 로컬 하네스만 만들
 
 | | 어디 | 역할 |
 | --- | --- | --- |
-| 템플릿 | `~/harness-template` (이 저장소) | 원본. 여기에 하네스를 만들지 않는다 |
-| 새 프로젝트 하네스 | 질문에서 고른 폴더(기본: 템플릿 옆 `orchestrator`) | 생성물. 코드 저장소는 그 옆 폴더에 |
+| 템플릿 | `~/.harness-template` (이 저장소, 숨김 폴더) | 원본. 여기에 하네스를 만들지 않는다. 여러 프로젝트가 같이 쓴다 |
+| 프로젝트 루트 | **설치 명령을 실행한 폴더 아래 `<프로젝트 슬러그>/`** (예: `~/dev` 에서 실행 → `~/dev/acme/`). 질문 첫머리에 「여기에 만듭니다: <경로>」를 보여 주고 Enter 면 그대로, 다른 경로도 된다. `--root <경로>` | 그 안에 하네스(`orchestrator/`)와 새 저장소들. 연결한 저장소는 루트 밖 경로 그대로 |
 
 템플릿이 갱신되면 하네스 폴더에서 `python3 harness/scripts/bootstrap.py update` (Windows 는 `py -3 ...`). 엔진(`harness/`)만 새로 가져와 다시 생성하고, 사람이 채운 스킬 본문 · 상황판 · 「프로젝트 메모」는 덮지 않는다.
 **주의:** 사람이 고친 규칙 스킬(absolute-rules 등)은 update 가 덮지 않으므로 템플릿의 규칙 뼈대가 바뀌어도 자동으로 들어오지 않는다. 템플릿 규칙 갱신은 `harness/skeleton/plugin/skills/` 와 직접 비교해 옮긴다.
@@ -66,14 +72,15 @@ gh · GitHub 로그인은 **선택**이다. 없으면 로컬 하네스만 만들
   "repos": [
     {"key": "web", "base_branch": "develop", "stack": "node", "description": "서비스 본체",
      "deploy": {"develop": "dev 배포", "main": "상용 배포"}, "ask_on_push": ["main"]},
-    {"key": "legacy", "source": "clone", "url": "https://github.com/acme-inc/legacy.git"}
+    {"key": "legacy", "source": "clone", "url": "https://github.com/acme-inc/legacy.git"},
+    {"key": "admin", "source": "local", "path": "~/code/admin", "connect_files": true}
   ],
   "engines": ["claude", "codex"],
   "orca": {"enabled": false}
 }
 ```
 
-빈 칸은 기본값으로 채운다: `dir` = `key`, `remote` = `<github_org>/<key>`(조직이 없으면 로컬만), `source` = `new`(url 을 적으면 `clone`),
+빈 칸은 기본값으로 채운다: `dir` = `key`, `remote` = `<github_org>/<key>`(조직이 없으면 로컬만), `source` = `new`(url 을 적으면 `clone`, 이 컴퓨터의 폴더는 `local` + `path`: 폴더 이름 · 기본 브랜치 · 원격을 그 저장소에서 읽고, `connect_files: true` 일 때만 없는 CLAUDE.md · AGENTS.md · .claude/settings.json 을 더한다),
 `stack`(`node` · `python` · `none`)에 따라 필요한 런타임과 작업자 검사 명령 기본값. 빈 저장소라 의존성(pnpm install 등)은 설치하지 않는다.
 전체 예시: `examples/harness.example.json`. 설정만 있으면 `./bootstrap.sh run --config harness.json --yes --non-interactive`.
 

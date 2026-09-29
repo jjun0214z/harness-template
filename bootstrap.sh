@@ -2,6 +2,7 @@
 # 하네스 셋업 진입(mac · Linux). python 3.9 이상을 찾아 harness/scripts/bootstrap.py 를 부른다.
 # 사용: ./bootstrap.sh [run|check|tools|generate|doctor] [옵션]   (인자 없이 부르면 대화형 run)
 here="$(cd "$(dirname "$0")" && pwd)"
+export HARNESS_CALLER_CWD="${HARNESS_CALLER_CWD:-$PWD}"   # 프로젝트는 실행한 폴더 아래 <슬러그>/ 에 만든다
 for py in python3 python; do
   if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
     exec "$py" "$here/harness/scripts/bootstrap.py" "$@"

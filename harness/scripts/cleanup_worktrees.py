@@ -68,8 +68,7 @@ def main(argv=None):
     recent = int(os.environ.get("RECENT_MIN", "120"))
     orca_ws = os.path.realpath(os.path.expanduser(cfg["orca"]["workspaces_dir"])) + os.sep
     removed = kept = scanned = 0
-    for d in hl.all_dirs(cfg):
-        repo = parent / d
+    for d, repo in [(cfg["harness_repo"]["dir"], args.root)] + [(r["dir"], hl.repo_path(r, parent)) for r in cfg["repos"]]:
         if not (repo / ".git").exists():
             print(f"건너뜀 [{d}] 저장소가 없다: {repo}")
             continue

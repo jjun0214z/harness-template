@@ -9,7 +9,7 @@ description: 하네스 셋업 · 점검 · 갱신. 사용자가 「셋업해」�
 python 명령은 이 기기에 있는 것을 쓴다(mac · Linux `python3`, Windows `py -3` 또는 `python`). 아래에서는 `PY` 로 적는다.
 
 ## 0. 어디서 시작하나
-- 템플릿(`~/harness-template`, 루트에 `.harness-template` 파일)이 없으면 먼저 받는다. 할 일 표만 보려면:
+- 템플릿 원본(`~/.harness-template`, 예전 자리 `~/harness-template`. 루트에 `.harness-template` 파일)이 없으면 먼저 받는다. 할 일 표만 보려면:
   - mac · Linux: `curl -fsSL https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.sh | bash -s -- --dry-run`
   - Windows: `$env:HARNESS_DRY_RUN='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1 | iex`
   표를 사용자에게 보여 주고 **동의를 받은 뒤** `--yes --no-run`(Windows 는 `HARNESS_YES=1` · `HARNESS_NO_RUN=1`)으로 설치 · 받기만 한다. 질문은 1번부터 대화로 한다.
@@ -32,12 +32,13 @@ python 명령은 이 기기에 있는 것을 쓴다(mac · Linux `python3`, Wind
 `PY harness/scripts/bootstrap.py tools --config harness.json` 표(도구 · 찾은 버전 · 할 일)를 보여 준다. 동의를 받으면 5번에 `--yes` 를 붙인다.
 
 ## 5. 끝까지 실행
-`PY harness/scripts/bootstrap.py run --config harness.json --target <새 하네스 폴더> --non-interactive [--yes] [--create-github]`
+`PY harness/scripts/bootstrap.py run --config harness.json --root <프로젝트 루트> --non-interactive [--yes] [--create-github]`
+- 프로젝트 루트 기본값은 **사용자가 명령을 실행한 폴더 아래 `<슬러그>/`** 다. 사용자에게 「여기에 만듭니다: <경로>」를 보여 주고 확인받은 뒤 `--root` 로 넘긴다. 그 안에 하네스(`<하네스 폴더>/`)와 새 저장소를 만든다.
 - 저장소는 새로 만든다(`git init` · 뼈대 · 첫 커밋). 이미 있는 폴더는 덮지 않는다.
 - `--create-github` 은 gh 로그인이 있을 때만 비공개 원격 · 라벨을 만든다. 사용자에게 먼저 묻는다. 없으면 「나중에 할 일」에 연결 명령이 남는다.
 
 ## 6. 점검 표
-`PY harness/scripts/bootstrap.py doctor --target <하네스 폴더>` 표와 「나중에 할 일」을 그대로 보여 준다. 로그인(`claude` 첫 실행 · `! codex login` · `! gh auth login`)은 사용자가 직접 한다.
+`PY harness/scripts/bootstrap.py doctor --target <프로젝트 루트>/<하네스 폴더>` 표와 「나중에 할 일」을 그대로 보여 준다. 로그인(`claude` 첫 실행 · `! codex login` · `! gh auth login`)은 사용자가 직접 한다.
 
 ## 7. 템플릿 갱신
 하네스 폴더에서 `PY harness/scripts/bootstrap.py update`. 바뀐 파일을 `git diff` 로 보여 주고 경로를 명시해 커밋한다.

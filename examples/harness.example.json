@@ -50,6 +50,16 @@
       ],
       "stack": "python",
       "source": "new"
+    },
+    {
+      "key": "legacy",
+      "source": "local",
+      "path": "~/code/legacy-admin",
+      "description": "이미 있던 운영 화면(연결만, 옮기지 않음)",
+      "stack": "node",
+      "connect_files": false,
+      "deploy": {},
+      "ask_on_push": []
     }
   ],
   "skills": {
