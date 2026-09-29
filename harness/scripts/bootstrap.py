@@ -600,6 +600,10 @@ def install_step(cfg: dict, target: Path, parent: Path, kind: str, rep: Report) 
             bad = [] if run([claude, "plugin", "install", f"{slug}@{slug}", "--scope", "project"], cwd=target, timeout=120)[0] == 0 else [cfg["harness_repo"]["dir"]]
             for r in cfg["repos"]:
                 d = hl.repo_path(r, parent)
+                if r["source"] == "local" and not r.get("connect_files"):
+                    # 연결한 남의 저장소: 동의 없이 그 저장소 설정(settings.local.json)을 바꾸지 않는다
+                    rep.todo(f"{r['dir']}: 연결한 저장소라 플러그인을 켜지 않았다. 원하면 그 폴더에서 claude plugin install {slug}@{slug} --scope local")
+                    continue
                 if d.is_dir() and run([claude, "plugin", "install", f"{slug}@{slug}", "--scope", "local"], cwd=d, timeout=120)[0] != 0:
                     bad.append(r["dir"])
             if ok and not bad:

@@ -95,6 +95,20 @@ class ConnectLocalRepo(unittest.TestCase):
         self.assertEqual(before, tree_snapshot(self.legacy))
         self.assertIn("connect_files: true", r.stdout)
 
+    def test_plugin_install_only_with_consent(self):
+        self.sb.fake_tools(("claude",))
+        for consent in (False, True):
+            r = self.sb.bootstrap("run", "--config", str(self.config(connect_files=consent, engines=("claude",))),
+                                  "--target", str(self.target), "--offline", "--non-interactive")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            installs = [c for c in self.sb.tool_calls() if c["tool"] == "claude" and c["args"][:2] == ["plugin", "install"]
+                        and Path(c["cwd"]).resolve() == self.legacy.resolve()]
+            if consent:
+                self.assertTrue(installs, "동의했는데 연결 저장소에 플러그인을 켜지 않았다")
+            else:
+                self.assertFalse(installs, "동의 없이 연결 저장소에 claude plugin install 을 불렀다")
+                self.assertIn("연결한 저장소라 플러그인을 켜지 않았다", r.stdout)
+
     def test_missing_path_fails(self):
         cfg = json.loads(self.config(True).read_text(encoding="utf-8"))
         cfg["repos"][1]["path"] = str(self.sb.tmp / "없는폴더")

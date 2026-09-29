@@ -181,6 +181,24 @@ class Shells(unittest.TestCase):
         r = subprocess.run([pwsh, "-NoProfile", "-Command", code], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
+    def test_ps1_splatted_variables_are_always_arrays(self):
+        """PowerShell 은 원소 하나짜리 결과를 문자열로 풀어 버린다. @이름 으로 넘기는 변수는 모두 `$이름 = @(` 로 만들어야
+        인자가 글자 단위로 쪼개지지 않는다(윈도우 실측: invalid choice: 'r'). pwsh 가 없어도 이 규칙은 잰다."""
+        import re
+        for ps1 in ("install.ps1", "bootstrap.ps1"):
+            text = (TEMPLATE / ps1).read_text(encoding="utf-8")
+            code = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+            splats = set(re.findall(r"(?<![\w$'\"])@([A-Za-z_]\w*)", code)) - {"args"}
+            self.assertTrue(splats, ps1)
+            for name in sorted(splats):
+                assigns = re.findall(r"\$" + name + r"\s*=\s*(.+)", code)
+                self.assertTrue(assigns, f"{ps1}: @{name} 을 넘기는데 대입이 없다")
+                for a in assigns:
+                    self.assertTrue(a.startswith("@("), f"{ps1}: ${name} = {a[:40]} 는 @( 로 감싸야 한다")
+        install = (TEMPLATE / "install.ps1").read_text(encoding="utf-8")
+        self.assertIn("$BootArgs = @(if ($env:HARNESS_ARGS)", install)
+        self.assertIn("$py = @(Find-Python)", install)
+
     def test_setup_skill_copies_identical(self):
         src = (TEMPLATE / "harness/skeleton/plugin/skills/setup/SKILL.md").read_bytes()
         self.assertEqual((TEMPLATE / ".claude/skills/setup/SKILL.md").read_bytes(), src)

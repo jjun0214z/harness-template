@@ -5,18 +5,19 @@ $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $env:HARNESS_CALLER_CWD) { $env:HARNESS_CALLER_CWD = (Get-Location).Path }   # 프로젝트는 실행한 폴더 아래 <슬러그>\ 에
 $script = Join-Path $here 'harness\scripts\bootstrap.py'
-$candidates = @(@('py', '-3'), @('python3'), @('python'))
-foreach ($c in $candidates) {
+# 후보는 한 줄 문자열로 두고 -split 결과를 @() 로 받는다(원소 하나짜리 배열이 문자열로 풀리는 것을 막는다)
+foreach ($line in @('py -3', 'python3', 'python')) {
+    $c = @($line -split ' ')
     $cmd = Get-Command $c[0] -ErrorAction SilentlyContinue
     if (-not $cmd) { continue }
     # 스토어 연결용 가짜 python(WindowsApps)은 건너뛴다
     if ($cmd.Source -like '*WindowsApps*') { continue }
-    $extra = @()
-    if ($c.Length -gt 1) { $extra = $c[1..($c.Length - 1)] }
+    $extra = @($c | Select-Object -Skip 1)
     & $cmd.Source @extra -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>$null
     if ($LASTEXITCODE -eq 0) {
         $env:PYTHONUTF8 = '1'
-        & $cmd.Source @extra $script @args
+        $passArgs = @($args)
+        & $cmd.Source @extra $script @passArgs
         exit $LASTEXITCODE
     }
 }

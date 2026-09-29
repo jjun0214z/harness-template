@@ -125,6 +125,11 @@ if [ "$PKG" = apt ]; then
 fi
 
 say "하네스 템플릿 설치 ($OS) · 프로젝트는 $HARNESS_CALLER_CWD/<프로젝트 슬러그> 에 만든다"
+# 예전 방식(홈 바로 아래)으로 만든 하네스가 있으면 알려 준다: 새로 만들지 말고 그 폴더에서 update
+for h in "$HOME"/*/harness.json; do
+  [ -f "$h" ] || continue
+  say "이미 만든 하네스가 있다: $(dirname "$h"). 템플릿 갱신만이면 그 폴더에서: python3 harness/scripts/bootstrap.py update"
+done
 [ "${LEGACY:-0}" = 1 ] && say "(예전 자리 $DIR 의 템플릿을 그대로 쓴다. 새로 받으면 ~/.harness-template 에 둔다)"
 say ""
 say "| 도구 | 찾은 버전 | 할 일 | 명령 |"

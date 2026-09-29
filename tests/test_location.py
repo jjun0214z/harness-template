@@ -151,6 +151,15 @@ class InstallKeepsCwd(unittest.TestCase):
         self.assertTrue((dev / "zero" / "orchestrator" / "harness.json").is_file(), "실행한 폴더 아래에 만들지 않았다")
         self.assertFalse((self.sb.home / "zero").exists())
 
+    def test_existing_v1_harness_is_announced(self):
+        old = self.sb.home / "orchestrator"
+        old.mkdir()
+        (old / "harness.json").write_text("{}", encoding="utf-8")
+        r = subprocess.run(["bash", str(TEMPLATE / "install.sh"), "--dry-run"], capture_output=True, text=True,
+                           env=self.env(), stdin=subprocess.DEVNULL, timeout=60)
+        self.assertIn(f"이미 만든 하네스가 있다: {old}", r.stdout)
+        self.assertIn("bootstrap.py update", r.stdout)
+
     def test_legacy_template_dir_is_reused(self):
         legacy = self.sb.home / "harness-template"
         legacy.mkdir()

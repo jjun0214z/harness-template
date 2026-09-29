@@ -81,9 +81,9 @@ def read_session(f: Path) -> dict:
     try:
         data = json.loads(f.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise Stop(f"세션 상태를 읽지 못했다: {f.name} ({exc.__class__.__name__}). 쓰는 중일 수 있어 끝내지 않는다. 잠시 뒤 다시 부른다")
+        raise Stop(f"세션 상태를 읽지 못했다: {f} ({exc.__class__.__name__}). 쓰는 중일 수 있어 끝내지 않는다. 잠시 뒤 다시 부른다")
     if not isinstance(data, dict) or not isinstance(data.get("pid"), int) or isinstance(data.get("pid"), bool) or not data.get("cwd"):
-        raise Stop(f"세션 상태를 읽지 못했다: {f.name} (pid 가 정수가 아니거나 cwd 가 없다)")
+        raise Stop(f"세션 상태를 읽지 못했다: {f} (pid 가 정수가 아니거나 cwd 가 없다)")
     data["_file"] = str(f)
     return data
 
@@ -104,9 +104,58 @@ def process_command(pid: int) -> Optional[str]:
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
 
+RUNTIMES = {"node", "nodejs", "bun", "deno"}
+SHELLS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "login"}
+
+
 def looks_like_claude(command: str) -> bool:
-    """실행 파일(또는 스크립트) 이름이 claude 인가. node 로 도는 경우 @anthropic-ai/claude-code 경로도 본다."""
-    return bool(re.search(r"(^|[\s/])claude(\s|$)|@anthropic-ai/claude-code", command))
+    """실행 파일 자리만 본다: 첫 토큰의 이름이 claude, 또는 node · bun 같은 런타임 다음 토큰이 claude 실행 스크립트.
+    인자 속 claude(편집 중인 파일 이름 등)는 세지 않는다."""
+    tokens = command.split()
+    if not tokens:
+        return False
+    first = os.path.basename(tokens[0])
+    if first == "claude":
+        return True
+    if first in RUNTIMES and len(tokens) > 1:
+        script = tokens[1]
+        return os.path.basename(script) == "claude" or "@anthropic-ai/claude-code/" in script
+    return False
+
+
+def process_table() -> dict:
+    """pid → (ppid, 실행 이름). ps 로 한 번에 읽는다. 못 읽으면 멈춘다."""
+    r = subprocess.run(["ps", "-axo", "pid=,ppid=,comm="], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        raise Stop("ps 로 프로세스 관계를 읽지 못했다. 끝내지 않는다")
+    table = {}
+    for line in r.stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            table[int(parts[0])] = (int(parts[1]), os.path.basename(parts[2].strip()).lstrip("-"))
+    return table
+
+
+def session_family(sessions: List[dict], table: dict) -> set:
+    """쉬는 세션과 함께 허용하는 프로세스: 세션의 자손(MCP 서버 등, cwd 를 물려받는다)과
+    세션 바로 위로 이어진 셸 조상(터미널 · bash -c). 셸이 아닌 조상에서 멈춘다."""
+    family = set()
+    children: dict = {}
+    for pid, (ppid, _) in table.items():
+        children.setdefault(ppid, []).append(pid)
+    for s in sessions:
+        stack = [s["pid"]]
+        while stack:
+            pid = stack.pop()
+            for c in children.get(pid, []):
+                if c not in family:
+                    family.add(c)
+                    stack.append(c)
+        parent = table.get(s["pid"], (0, ""))[0]
+        while parent > 1 and parent in table and table[parent][1] in SHELLS:
+            family.add(parent)
+            parent = table[parent][0]
+    return family
 
 
 def lsof_path() -> Optional[str]:
@@ -205,7 +254,8 @@ def check(worktree: Path, dispatch: Optional[str], orca: Optional[str], cfg: Opt
         st = s.get("status")
         if st != "idle":
             raise Stop(f"Claude 세션 {s.get('name') or s.get('pid')} 가 쉬는 상태가 아니다(status={st or '모름'}). 작업 중이거나 응답 대기면 끝내지 않는다")
-    others = [p for p in processes_in(wt) if p not in {s["pid"] for s in sessions}]
+    allowed = {s["pid"] for s in sessions} | (session_family(sessions, process_table()) if sessions else set())
+    others = [p for p in processes_in(wt) if p not in allowed]
     if others:
         raise Stop(f"세션 파일 없이 이 워크트리를 쓰는 프로세스가 있다(pid {', '.join(map(str, others))}). 끝내지도 지우지도 않는다")
     return sessions
@@ -322,20 +372,47 @@ def main(argv=None) -> int:
         sessions = check(args.worktree, args.dispatch, orca, cfg)
         names = [str(s.get("name")) for s in sessions if s.get("name")]
         name = args.name or (", ".join(names) if names else os.path.basename(wt))
+        # 앱 목록 제목은 자동 생성이라 이름으로는 못 찾는다. 목록 링크 /code/<bridgeSessionId> 로 맞춘다. 종료 전에 읽어 둔다
+        ids = [str(s["bridgeSessionId"]) for s in sessions if s.get("bridgeSessionId")]
+        name = archive_line(name, ids, len(sessions))
         if args.dry_run:
             print(f"[미리보기] 안전 조건 통과: {wt}")
             print(f"  끝낼 Claude 세션: {', '.join(str(s['pid']) for s in sessions) or '없음'} · 지울 워크트리: {wt}")
-            print(f"앱 보관 대상(Claude): {name}")
+            print(name)
             return 0
         with CleanupLock():
+            # 순서: 세션 정상 종료(신호 직전 확인 포함) → (Orca) worker-release → 사후 확인 → Codex 보관 → 워크트리 삭제
             terminate(sessions, args.wait, wt)
-            left = processes_in(wt)
+            if args.dispatch and orca:
+                subprocess.run([orca, "orchestration", "worker-release", "--dispatch", args.dispatch, "--json"], capture_output=True)
+            left = wait_empty(wt, args.wait)
             if left:
-                raise Stop(f"세션을 끝낸 뒤에도 이 워크트리를 쓰는 프로세스가 남았다(pid {', '.join(map(str, left))}). 지우지 않는다")
+                how = ("Orca 가 터미널을 아직 닫지 않았다. Orca 에서 그 작업자 터미널을 닫고 다시 부른다" if args.dispatch
+                       else "작업자를 띄운 터미널(셸)이 아직 열려 있다. 그 터미널을 닫고 다시 부른다")
+                desc = ", ".join(f"{p} {(process_command(p) or '?')[:60]}" for p in left)
+                raise Stop(f"세션을 끝낸 뒤에도 이 워크트리를 쓰는 프로세스가 남았다({desc}). {how}. 지우지 않는다")
             return remove(args, wt, cfg, orca, name)
     except Stop as exc:
         print(f"멈춤: {exc}", file=sys.stderr)
         return 1
+
+
+def archive_line(name: str, ids: List[str], n_sessions: int) -> str:
+    """마지막 줄. 세션 ID 가 있으면 「앱 보관 대상(Claude): <이름> · <ID>」, 없으면 이름만과 건너뜀 안내."""
+    if ids:
+        return f"앱 보관 대상(Claude): {name} · {' · '.join(ids)}"
+    why = "끝낸 Claude 세션 없음" if n_sessions == 0 else "세션 파일에 bridgeSessionId 없음"
+    return f"앱 보관 대상(Claude): {name} (세션 ID 모름: {why}. 브라우저 보관은 건너뛰고 보고한다)"
+
+
+def wait_empty(wt: str, wait: float) -> List[int]:
+    """세션이 끝나며 자식 · 셸도 따라 끝날 시간을 준다. 끝까지 남은 pid 를 돌려준다."""
+    deadline = time.time() + wait
+    left = processes_in(wt)
+    while left and time.time() < deadline:
+        time.sleep(0.2)
+        left = processes_in(wt)
+    return left
 
 
 def remove(args, wt: str, cfg: Optional[dict], orca: Optional[str], name: str) -> int:
@@ -345,7 +422,6 @@ def remove(args, wt: str, cfg: Optional[dict], orca: Optional[str], name: str) -
     branch = git(wt, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     main_repo = str(Path(git(wt, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()).parent)
     if args.dispatch and orca:
-        subprocess.run([orca, "orchestration", "worker-release", "--dispatch", args.dispatch, "--json"], capture_output=True)
         r = subprocess.run([orca, "worktree", "rm", "--worktree", f"path:{wt}", "--run-hooks", "--json"], capture_output=True, text=True)
     else:
         r = git(main_repo, "worktree", "remove", wt)
@@ -355,7 +431,7 @@ def remove(args, wt: str, cfg: Optional[dict], orca: Optional[str], name: str) -
         print(f"멈춤: 워크트리 지우기 실패: {(r.stderr or r.stdout).strip()[-200:]}", file=sys.stderr)
         return 1
     print(f"정리 완료: {wt}")
-    print(f"앱 보관 대상(Claude): {name}")
+    print(name)
     return 0
 
 

@@ -55,6 +55,9 @@ gh · GitHub 로그인은 **선택**이다. 없으면 로컬 하네스만 만들
 
 ## 템플릿과 새 하네스
 
+**이미 만든 하네스가 있으면 새로 설치하지 말고, 그 하네스 폴더에서 `python3 harness/scripts/bootstrap.py update` 로 템플릿 갱신만 받는다**(Windows 는 `py -3 harness\scripts\bootstrap.py update`).
+
+
 | | 어디 | 역할 |
 | --- | --- | --- |
 | 템플릿 | `~/.harness-template` (이 저장소, 숨김 폴더) | 원본. 여기에 하네스를 만들지 않는다. 여러 프로젝트가 같이 쓴다 |
@@ -104,7 +107,7 @@ gh · GitHub 로그인은 **선택**이다. 없으면 로컬 하네스만 만들
 작업자가 끝나면 `python3 harness/scripts/finish_worker.py <워크트리>` (Orca 작업자는 `scripts/orca-finish-worker.sh <dispatch> <워크트리>`).
 변경 없음 · 원격에 없는 커밋 0 · 그 작업자가 작업 중/응답 대기가 아님 · 부른 세션 자신의 워크트리가 아님을 전부 확인하고, 하나라도 모르면 멈춘다(`--dry-run` 으로 미리 보기).
 Claude 세션은 정상 종료만 하고(안 끝나면 멈추고 보고), Codex 세션은 `codex archive` 로 보관한다. Claude 앱 · 웹 · 폰의 원격 세션 목록은 스크립트로 보관할 공개 방법이 없어,
-오케스트레이터가 브라우저 도구로 claude.ai/code 를 열어 작업 이름이 맞고 오프라인인 세션만 보관한다(생성되는 `deploy` 스킬 「작업 공간 · 앱 세션 정리」).
+오케스트레이터가 브라우저 도구로 claude.ai/code 를 열어 링크가 `/code/<bridgeSessionId>`(정리 스크립트가 끝에 출력)인 오프라인 세션만 보관한다(목록 제목은 자동 생성이라 이름으로는 못 찾는다)(생성되는 `deploy` 스킬 「작업 공간 · 앱 세션 정리」).
 
 ## Orca 가 없을 때
 

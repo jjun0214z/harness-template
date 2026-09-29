@@ -27,7 +27,8 @@ $NodeMajor = 22
 $Yes = $env:HARNESS_YES -eq '1'
 $Dry = $env:HARNESS_DRY_RUN -eq '1'
 $NoRun = $env:HARNESS_NO_RUN -eq '1'
-$BootArgs = if ($env:HARNESS_ARGS) { $env:HARNESS_ARGS -split ' ' } else { @('run') }
+# 반드시 @() 로 감싼다: if 식 결과가 원소 하나면 문자열로 풀려 @BootArgs 가 글자 단위(r u n)로 넘어간다
+$BootArgs = @(if ($env:HARNESS_ARGS) { $env:HARNESS_ARGS -split ' ' | Where-Object { $_ } } else { 'run' })
 
 function Have($name) { return [bool](Get-Command $name -ErrorAction SilentlyContinue) }
 
@@ -39,18 +40,18 @@ function Refresh-Path {
 }
 
 function Find-Python {
-    foreach ($c in @(@('py', '-3'), @('python3'), @('python'))) {
+    # 돌려주는 것: 실행 파일과 인자(예: py.exe -3). 부르는 쪽이 항상 @(Find-Python) 으로 받아 배열로 쓴다
+    foreach ($line in @('py -3', 'python3', 'python')) {
+        $c = @($line -split ' ')
         $cmd = Get-Command $c[0] -ErrorAction SilentlyContinue
         if (-not $cmd) { continue }
         if ($cmd.Source -like '*WindowsApps*') { continue }   # 스토어 연결용 가짜 실행 파일
-        $extra = @(); if ($c.Length -gt 1) { $extra = $c[1..($c.Length - 1)] }
+        $extra = @($c | Select-Object -Skip 1)
         & $cmd.Source @extra -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>$null
         if ($LASTEXITCODE -eq 0) {
-            [string[]]$found = @($cmd.Source) + $extra
-            return , $found   # 쉼표: 원소 하나짜리 배열이 문자열로 풀리지 않게 한다
+            return @($cmd.Source) + $extra
         }
     }
-    return $null
 }
 
 function Node-Major {
@@ -70,8 +71,8 @@ function Winget-Or($id, $manual) { if ($hasWinget) { return "winget install -e -
 if (Have 'git') { Add-Plan 'git' ((& git --version) -replace 'git version ', '') '건너뜀' '-' }
 else { Add-Plan 'git' '없음' ($(if ($hasWinget) { '설치' } else { '안내' })) (Winget-Or 'Git.Git' 'https://git-scm.com/download/win') }
 
-$py = Find-Python
-if ($py) { Add-Plan 'python' ((& $py[0] @($py | Select-Object -Skip 1) --version) -replace 'Python ', '') '건너뜀' '-' }
+$py = @(Find-Python)
+if ($py.Count -gt 0) { $pyArgs = @($py | Select-Object -Skip 1); Add-Plan 'python' ((& $py[0] @pyArgs --version) -replace 'Python ', '') '건너뜀' '-' }
 else { Add-Plan 'python' '없음(3.9 이상 필요)' ($(if ($hasWinget) { '설치' } else { '안내' })) (Winget-Or 'Python.Python.3.12' 'https://www.python.org/downloads/windows/') }
 
 $nm = Node-Major
@@ -87,6 +88,11 @@ $isTemplate = (Test-Path (Join-Path $Dir '.git')) -or (Test-Path (Join-Path $Dir
 if ($isTemplate) { Add-Plan '템플릿' $Dir '갱신' '-' } else { Add-Plan '템플릿' '없음' '받기' $Dir }
 
 Write-Host "하네스 템플릿 설치 (windows) · 프로젝트는 $($env:HARNESS_CALLER_CWD)\<프로젝트 슬러그> 에 만든다"
+Get-ChildItem -Path $HOME -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+    if (Test-Path (Join-Path $_.FullName 'harness.json')) {
+        Write-Host "이미 만든 하네스가 있다: $($_.FullName). 템플릿 갱신만이면 그 폴더에서: py -3 harness\scripts\bootstrap.py update"
+    }
+}
 Write-Host ''
 Write-Host '| 도구 | 찾은 버전 | 할 일 | 명령 |'
 Write-Host '| --- | --- | --- | --- |'
@@ -112,11 +118,11 @@ if ($todo.Count -gt 0 -and $go) {
         if ($LASTEXITCODE -ne 0 -and $r.Tool -in @('git', 'python')) { Write-Host "$($r.Tool) 설치 실패: $($r.Cmd)"; return }
         Refresh-Path
     }
-    $py = Find-Python
+    $py = @(Find-Python)
 } elseif ($todo.Count -gt 0) {
     Write-Host '설치 · 올림을 건너뛴다(무인 실행은 HARNESS_YES=1). 위 표의 명령을 직접 실행한 뒤 다시 부른다.'
 }
-if (-not $py) { Write-Host 'python 3.9 이상이 없어 멈춘다. 위 표의 python 명령을 실행한 뒤 새 PowerShell 에서 다시 부른다.'; return }
+if ($py.Count -eq 0) { Write-Host 'python 3.9 이상이 없어 멈춘다. 위 표의 python 명령을 실행한 뒤 새 PowerShell 에서 다시 부른다.'; return }
 
 # ---------------------------------------------------------------- 템플릿 받기 · 갱신
 if ((Test-Path (Join-Path $Dir '.git')) -and (Have 'git')) {
@@ -152,7 +158,8 @@ if ($NoRun) { Write-Host "[끝] 템플릿 $Dir (bootstrap 은 부르지 않음)"
 $boot = Join-Path $Dir 'harness\scripts\bootstrap.py'
 $env:PYTHONUTF8 = '1'
 Write-Host "[bootstrap] $($py -join ' ') $boot $($BootArgs -join ' ')"
-& $py[0] @($py | Select-Object -Skip 1) $boot @BootArgs
+$pyArgs = @($py | Select-Object -Skip 1)   # py.exe 만이면 빈 배열
+& $py[0] @pyArgs $boot @BootArgs
 }
 
 Install-Harness
