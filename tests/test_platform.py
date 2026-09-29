@@ -196,7 +196,8 @@ class Shells(unittest.TestCase):
                 for a in assigns:
                     self.assertTrue(a.startswith("@("), f"{ps1}: ${name} = {a[:40]} 는 @( 로 감싸야 한다")
         install = (TEMPLATE / "install.ps1").read_text(encoding="utf-8")
-        self.assertIn("$BootArgs = @(if ($env:HARNESS_ARGS)", install)
+        self.assertIn("$parsed = ConvertFrom-Json $env:HARNESS_ARGS_JSON", install)
+        self.assertIn("$BootArgs = @($parsed | ForEach-Object { [string]$_ })", install)
         self.assertIn("$py = @(Find-Python)", install)
 
     def test_setup_skill_copies_identical(self):

@@ -60,7 +60,8 @@ class GitBash(unittest.TestCase):
         self.assertEqual(args, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
                                 "irm https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1 | iex"])
         self.assertEqual(env["HARNESS_CALLER_CWD"], "C:\\Users\\u\\dev", "실행한 폴더를 Windows 경로로 넘기지 않았다")
-        self.assertEqual(env["HARNESS_ARGS"], "run --root D:/work/acme")
+        self.assertEqual(json.loads(env["HARNESS_ARGS_JSON"]), ["run", "--root", "D:/work/acme"])
+        self.assertNotIn("HARNESS_ARGS", env)
         self.assertEqual(env["HARNESS_YES"], "1")
         self.assertNotIn("하네스 템플릿 설치", r.stdout, "넘기기 전에 mac · Linux 설치를 시작했다")
 
@@ -74,7 +75,51 @@ class GitBash(unittest.TestCase):
             exe, _, env = self.recorded()
             self.assertTrue(exe.endswith("pwsh.exe"), exe)
             self.assertEqual(env["HARNESS_DRY_RUN"], "1")
-            self.assertEqual(env["HARNESS_ARGS"], "run")
+            self.assertEqual(json.loads(env["HARNESS_ARGS_JSON"]), ["run"])
+
+    def fake_cygpath(self):
+        # /c/rest -> C:\rest (슬래시는 역슬래시로). 그 밖은 그대로
+        self.fake("cygpath", '#!/bin/bash\n[ "$1" = -w ] && shift\np="$1"\n'
+                  'if [[ "$p" == /?/* ]]; then d="${p:1:1}"; p="$(printf %s "$d" | tr a-z A-Z):${p:2}"; fi\n'
+                  'printf "%s\\n" "${p//\\//\\\\}"\n')
+
+    def test_space_root_and_msys_paths_stay_one_arg(self):
+        """공백 든 --root 가 쪼개지지 않고, /c/... 경로는 Windows 경로로, 따옴표 · 역슬래시도 JSON 으로 안전하게 간다."""
+        self.fake("powershell.exe", RECORDER)
+        self.fake_cygpath()
+        r = subprocess.run(["bash", str(TEMPLATE / "install.sh"), "--", "run", "--root", "/c/work/u/My Projects/kids",
+                            "--config=/d/cfg dir/h.json", "--note", 'a "b" C:\\x'],
+                           capture_output=True, text=True, env=self.env(), stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        _, _, env = self.recorded()
+        self.assertEqual(json.loads(env["HARNESS_ARGS_JSON"]),
+                         ["run", "--root", "C:\\work\\u\\My Projects\\kids", "--config=D:\\cfg dir\\h.json", "--note", 'a "b" C:\\x'])
+
+    def test_handoff_modes(self):
+        """mintty 에서 바로 띄운 powershell.exe 는 입력을 못 받을 수 있다: winpty 로 감싸거나 새 PowerShell 창으로 넘긴다."""
+        self.fake("powershell.exe", RECORDER)
+        self.fake("winpty", RECORDER)
+        url = "https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1"
+        r = subprocess.run(["bash", str(TEMPLATE / "install.sh")], capture_output=True, text=True,
+                           env=self.env(HARNESS_WIN_HANDOFF="winpty"), stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        exe, args, _ = self.recorded()
+        self.assertTrue(exe.endswith("winpty"), exe)
+        self.assertEqual(args, ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", f"irm {url} | iex"])
+        r = subprocess.run(["bash", str(TEMPLATE / "install.sh")], capture_output=True, text=True,
+                           env=self.env(HARNESS_WIN_HANDOFF="window"), stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("새 PowerShell 창에서 이어진다", r.stdout)
+        exe, args, _ = self.recorded()
+        self.assertTrue(exe.endswith("powershell.exe"), exe)
+        self.assertEqual(args[:2], ["-NoProfile", "-Command"])
+        self.assertEqual(args[2], "Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoExit','-NoProfile',"
+                                  f"'-ExecutionPolicy','Bypass','-Command','irm {url} | iex'")
+        # 터미널이 없으면(시험 · 무인) winpty 가 있어도 바로 넘긴다
+        subprocess.run(["bash", str(TEMPLATE / "install.sh")], capture_output=True, text=True,
+                       env=self.env(), stdin=subprocess.DEVNULL, timeout=60)
+        exe, _, _ = self.recorded()
+        self.assertTrue(exe.endswith("powershell.exe"), exe)
 
     def test_no_powershell_explains(self):
         r = subprocess.run(["bash", str(TEMPLATE / "install.sh")], capture_output=True, text=True,

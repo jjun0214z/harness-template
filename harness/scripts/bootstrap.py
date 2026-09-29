@@ -211,11 +211,25 @@ def simple_interview(kind: str, reader: Callable[[str], str] = input, root_fixed
     root = root_fixed or project_root(None, cfg)
     engines = " · ".join({"claude": "Claude", "codex": "Codex"}[e] for e in cfg["engines"])
     orca = ("Orca 사용" if installed else "Orca 없으면 설치(선택)") if use_orca else "Orca 없음(--no-orca)"
-    ans = ask(f"\n여기에 만듭니다: {root} · 엔진 {engines} · 저장소는 나중에(add-repo) · {orca}\n"
-              "  Enter = 진행 · 다른 경로를 치면 그 폴더에 · n = 그만", "", reader)
-    if ans.lower() in ("n", "no", "아니오"):
-        raise hl.ConfigError("그만뒀다. 전부 고르려면 --detail 로 다시 실행한다")
-    cfg["_root"] = ans if ans else str(root)
+    problem = root_problem(root, cfg, False)
+    if problem:
+        say("\n" + problem)
+        ans = ask("  다른 경로 입력 · Enter 또는 n = 그만", "", reader)
+    else:
+        ans = ask(f"\n여기에 만듭니다: {root} · 엔진 {engines} · 저장소는 나중에(add-repo) · {orca}\n"
+                  "  Enter = 진행 · 다른 경로를 치면 그 폴더에 · n = 그만", "", reader)
+    while True:
+        if ans.lower() in ("n", "no", "아니오") or (problem and not ans):
+            raise hl.ConfigError("그만뒀다. 빈 폴더에서 다시 실행하거나 다른 경로를 준다. 전부 고르려면 --detail")
+        if not ans:
+            break
+        root = Path(os.path.expanduser(ans)).resolve()
+        problem = root_problem(root, cfg, False)
+        if not problem:
+            break
+        say(problem)
+        ans = ask("  다른 경로 입력 · Enter 또는 n = 그만", "", reader)
+    cfg["_root"] = str(root)
     return hl.normalize(cfg)
 
 
@@ -970,15 +984,15 @@ def dir_is_empty(path: Path) -> bool:
 
 def project_root(args, cfg: Optional[dict]) -> Path:
     """프로젝트 루트 = --root, 없으면 실행한 폴더 기준:
-    - 실행한 폴더에 이미 이 하네스가 있거나, 폴더 이름이 슬러그와 같거나, 폴더가 비어 있으면 그 폴더 자체
-    - 아니면 <실행한 폴더>/<슬러그>
-    그 안에 하네스와 새 저장소들."""
+    - 실행한 폴더가 비어 있거나 이미 이 하네스(<하네스 폴더>/harness.json)가 있을 때만 그 폴더 자체
+    - 아니면 <실행한 폴더>/<슬러그> (폴더 이름이 슬러그와 같아도 비어 있지 않으면 섞지 않는다)
+    <슬러그> 도 비어 있지 않은 남의 폴더면 root_problem 이 멈춘다. 그 안에 하네스와 새 저장소들."""
     if getattr(args, "root", None):
         return Path(args.root).expanduser().resolve()
     slug = cfg["project"]["slug"] if cfg else "project"
     hdir = cfg["harness_repo"]["dir"] if cfg else "orchestrator"
     base = caller_base()
-    if (base / hdir / hl.CONFIG_NAME).is_file() or base.name.lower() == slug or dir_is_empty(base):
+    if (base / hdir / hl.CONFIG_NAME).is_file() or dir_is_empty(base):
         return base
     return base / slug
 
@@ -1000,11 +1014,11 @@ def root_problem(root: Path, cfg: dict, force: bool) -> Optional[str]:
     """프로젝트 루트가 이미 있고 하네스 · 저장소 말고 다른 것이 있으면 멈춘다(harness.json 이 있으면 우리 프로젝트)."""
     if not root.is_dir() or (root / cfg["harness_repo"]["dir"] / hl.CONFIG_NAME).is_file() or force:
         return None
-    allowed = {cfg["harness_repo"]["dir"], ".DS_Store", ".work"} | {r["dir"] for r in cfg["repos"]}
+    allowed = {cfg["harness_repo"]["dir"], ".DS_Store", "desktop.ini", "Thumbs.db", ".work"} | {r["dir"] for r in cfg["repos"]}
     extra = sorted(p.name for p in root.iterdir() if p.name not in allowed)
     if extra:
         return (f"프로젝트 루트 {root} 가 이미 있고 하네스 표시(harness.json)가 없는데 다른 것이 있다({', '.join(extra[:5])}). "
-                "섞지 않도록 멈춘다. --root 로 다른 폴더를 주거나 그래도 여기면 --force")
+                "섞지 않도록 멈춘다. 빈 폴더에서 다시 실행하거나 --root 로 다른 경로를 준다")
     return None
 
 

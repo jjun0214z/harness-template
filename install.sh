@@ -46,16 +46,32 @@ have() { command -v "$1" >/dev/null 2>&1; }
 say() { printf '%s\n' "$*"; }
 
 # Windows 의 Git Bash · MSYS · Cygwin 에서 불렸을 때: 도구 설치(winget)와 경로가 Windows 방식이라 PowerShell 설치(install.ps1)로 넘긴다.
-# 실행한 폴더(Windows 경로로 바꿔서) · HARNESS_* 환경변수 · 받은 인자(HARNESS_ARGS)를 그대로 넘긴다.
+# 실행한 폴더(Windows 경로로 바꿔서) · HARNESS_* 환경변수 · 받은 인자를 넘긴다.
+# 인자는 한 줄 문자열이 아니라 JSON 배열(HARNESS_ARGS_JSON)로 넘긴다: 공백 든 경로(--root "C:\내 폴더")가 쪼개지지 않는다.
+# /c/... 같은 MSYS 경로 인자는 cygpath -w 로 Windows 경로로 바꾼다.
 handoff_windows() {
   PS1_URL="${HARNESS_PS1_URL:-https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1}"
   winpath() { if have cygpath; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+  json_str() {  # 문자열 하나를 JSON 문자열로(역슬래시 · 따옴표 · 탭 · 줄바꿈)
+    local v="$1"
+    v="${v//\\/\\\\}"; v="${v//\"/\\\"}"; v="${v//$'\t'/\\t}"; v="${v//$'\n'/\\n}"; v="${v//$'\r'/\\r}"
+    printf '"%s"' "$v"
+  }
   export HARNESS_CALLER_CWD="$(winpath "$HARNESS_CALLER_CWD")"
   [ -n "${HARNESS_DIR:-}" ] && export HARNESS_DIR="$(winpath "$HARNESS_DIR")"
   [ "$YES" = 1 ] && export HARNESS_YES=1
   [ "$DRY" = 1 ] && export HARNESS_DRY_RUN=1
   [ "$NORUN" = 1 ] && export HARNESS_NO_RUN=1
-  export HARNESS_ARGS="${BOOT_ARGS[*]}"
+  local json="" a
+  for a in "${BOOT_ARGS[@]}"; do
+    case "$a" in
+      /*) a="$(winpath "$a")" ;;                          # /c/work/... · /tmp/...
+      --*=/*) a="${a%%=*}=$(winpath "${a#*=}")" ;;        # --root=/c/...
+    esac
+    json="${json:+$json,}$(json_str "$a")"
+  done
+  export HARNESS_ARGS_JSON="[$json]"
+  unset HARNESS_ARGS   # 예전 한 줄 방식(공백으로 나눔)은 넘기지 않는다. install.ps1 은 JSON 을 먼저 본다
   PS=""
   for c in pwsh.exe pwsh powershell.exe powershell; do have "$c" && { PS="$c"; break; }; done
   if [ -z "$PS" ]; then
@@ -63,8 +79,27 @@ handoff_windows() {
     say "  irm $PS1_URL | iex"
     exit 2
   fi
+  local cmd="irm $PS1_URL | iex"
+  # Git Bash 창(mintty)은 진짜 Windows 콘솔이 아니라, 그 안에서 바로 띄운 powershell.exe 의 Read-Host · 파이썬 input() 이
+  # 입력을 못 받거나 멈출 수 있다. 그래서 (1) winpty 가 있으면(Git for Windows 에 들어 있다) winpty 로 감싸 이 창에서 잇고,
+  # (2) 없는데 mintty 면 새 PowerShell 창을 열어 거기서 잇는다(환경변수는 새 창이 물려받는다), (3) 그 밖(Windows Terminal 등 진짜 콘솔)은 이 창에서 바로.
+  # 터미널이 없으면(사람 입력 없음) 바로 넘긴다. HARNESS_WIN_HANDOFF=direct|winpty|window 로 직접 고를 수 있다.
+  local how="${HARNESS_WIN_HANDOFF:-}"
+  if [ -z "$how" ]; then
+    if [ "$TTY" != 1 ]; then how=direct
+    elif have winpty; then how=winpty
+    elif [ "${TERM_PROGRAM:-}" = mintty ] || [ "${MSYSCON:-}" = mintty.exe ]; then how=window
+    else how=direct; fi
+  fi
   say "Windows(Git Bash) 로 보인다. PowerShell 설치로 넘긴다: $PS · 프로젝트 위치 $HARNESS_CALLER_CWD"
-  exec "$PS" -NoProfile -ExecutionPolicy Bypass -Command "irm $PS1_URL | iex"
+  case "$how" in
+    winpty) exec winpty "$PS" -NoProfile -ExecutionPolicy Bypass -Command "$cmd" ;;
+    window)
+      say "새 PowerShell 창에서 이어진다. 그 창에서 질문에 답한다(이 창은 닫아도 된다)."
+      # Start-Process 는 -ArgumentList 를 공백으로 이어 붙인다: -Command 뒤가 통째로 명령이 된다. 새 창은 이 셸의 환경변수를 물려받는다
+      exec "$PS" -NoProfile -Command "Start-Process -FilePath '$PS' -ArgumentList '-NoExit','-NoProfile','-ExecutionPolicy','Bypass','-Command','$cmd'" ;;
+    *) exec "$PS" -NoProfile -ExecutionPolicy Bypass -Command "$cmd" ;;
+  esac
 }
 
 TTY=0; ( exec </dev/tty ) 2>/dev/null && TTY=1

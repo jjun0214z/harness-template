@@ -75,6 +75,8 @@ class ProjectRoot(unittest.TestCase):
         r = self.run_boot()
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("프로젝트 루트", r.stderr)
+        self.assertIn("빈 폴더에서 다시 실행하거나", r.stderr)
+        self.assertNotIn("--force", r.stderr, "멈춤 안내에서 --force 를 권하지 않는다")
         self.assertFalse((root / "orchestrator").exists())
         r = self.run_boot("--force")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

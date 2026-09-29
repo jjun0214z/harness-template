@@ -15,14 +15,14 @@ irm https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps
 3. 요약 「여기에 만듭니다: <경로> · 엔진 · 저장소는 나중에 · Orca」 → Enter
 4. 도구 표 → 설치 동의 한 번(Orca 도 없으면 여기서 같이 설치, `--no-orca` 로 뺀다)
 
-나머지는 기본값이다: 폴더 이름이 프로젝트 이름과 같거나 폴더가 비어 있으면 **그 폴더에**, 아니면 `<지금 폴더>/<이름>` 에 만든다 · 저장소 0개(나중에 add-repo) · GitHub 없음(로컬만) · 호칭 「대표님」 · 규칙 스킬 틀 전부. 전부 고르려면 `--detail`.
+나머지는 기본값이다: 지금 폴더가 비어 있거나 이미 이 하네스가 있으면 **그 폴더에**, 아니면 `<지금 폴더>/<이름>` 에 만든다(이름이 같아도 비어 있지 않은 폴더에는 섞지 않는다. 그 자리도 차 있으면 멈추고 다른 경로를 묻는다) · 저장소 0개(나중에 add-repo) · GitHub 없음(로컬만) · 호칭 「대표님」 · 규칙 스킬 틀 전부. 전부 고르려면 `--detail`.
 
 **Windows** 는 PowerShell 한 줄이 기본이다. 붙여 넣다 줄이 끊기면 두 줄로 해도 된다:
 ```powershell
 $u = "https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1"
 irm $u | iex
 ```
-Git Bash 에서 위 `curl … | bash` 한 줄을 써도 된다(스스로 Windows 임을 알아채 PowerShell 설치로 넘기고, 실행한 폴더와 옵션도 같이 넘긴다).
+Git Bash 에서 위 `curl … | bash` 한 줄을 써도 된다(스스로 Windows 임을 알아채 PowerShell 설치로 넘기고, 실행한 폴더와 옵션도 같이 넘긴다. 공백 든 경로 · `/c/...` 경로도 그대로 간다). Git Bash 창에서는 질문 입력이 막힐 수 있어 `winpty` 로 감싸 잇고, `winpty` 가 없으면 새 PowerShell 창을 열어 거기서 잇는다.
 
 ### 설정 바꾸기
 

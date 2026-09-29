@@ -8,7 +8,7 @@
 #       → 환경변수 PATH 다시 읽기 → 템플릿 받기(git clone, git 이 없으면 zip) · 이미 있으면 갱신 → bootstrap.py 실행
 # 이미 있는 것은 건너뛰고, node 가 모자라면 nvm-windows · fnm 이 있으면 그걸로 올린다. 기존 설치는 지우지 않는다.
 # 환경변수: HARNESS_YES=1(무인 동의) · HARNESS_DRY_RUN=1(할 일만 출력) · HARNESS_NO_RUN=1(받기까지만) · HARNESS_DIR · HARNESS_TEMPLATE_URL · HARNESS_ZIP_URL
-#           HARNESS_ARGS(bootstrap.py 로 넘길 인자, 기본 run)
+#           HARNESS_ARGS_JSON(bootstrap.py 로 넘길 인자, JSON 문자열 배열) · HARNESS_ARGS(공백으로 나누는 한 줄) · 없으면 run
 
 # 본문 전체가 Install-Harness 함수 안에 있고 마지막 줄에서만 부른다: 끝까지 받기 전에는 아무것도 실행하지 않는다.
 function Install-Harness {
@@ -28,8 +28,17 @@ $NodeMajor = 22
 $Yes = $env:HARNESS_YES -eq '1'
 $Dry = $env:HARNESS_DRY_RUN -eq '1'
 $NoRun = $env:HARNESS_NO_RUN -eq '1'
-# 반드시 @() 로 감싼다: if 식 결과가 원소 하나면 문자열로 풀려 @BootArgs 가 글자 단위(r u n)로 넘어간다
-$BootArgs = @(if ($env:HARNESS_ARGS) { $env:HARNESS_ARGS -split ' ' | Where-Object { $_ } } else { 'run' })
+# bootstrap.py 인자: HARNESS_ARGS_JSON(JSON 문자열 배열, Git Bash 의 install.sh 가 넘긴다. 공백 든 경로도 한 인자로) >
+# HARNESS_ARGS(공백으로 나누는 한 줄, 사람이 직접 줄 때) > 기본 run.
+# 반드시 @() 로 감싼다: 결과가 원소 하나면 문자열로 풀려 @BootArgs 가 글자 단위(r u n)로 넘어간다
+$BootArgs = @()
+if ($env:HARNESS_ARGS_JSON) {
+    $parsed = ConvertFrom-Json $env:HARNESS_ARGS_JSON   # 배열 하나가 통째로 온다: 변수에 받은 뒤 풀어야 원소별이 된다
+    $BootArgs = @($parsed | ForEach-Object { [string]$_ })
+} elseif ($env:HARNESS_ARGS) {
+    $BootArgs = @($env:HARNESS_ARGS -split ' ' | Where-Object { $_ })
+}
+if ($BootArgs.Count -eq 0) { $BootArgs = @('run') }
 
 function Have($name) { return [bool](Get-Command $name -ErrorAction SilentlyContinue) }
 

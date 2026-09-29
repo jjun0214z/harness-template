@@ -52,6 +52,57 @@ class TwoQuestions(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue((dev / "kids" / "orchestrator" / "harness.json").is_file())
 
+    def test_nonempty_folder_named_like_slug_gets_subfolder(self):
+        """폴더 이름이 슬러그와 같아도 코드가 든 git 저장소면 그 안에 섞지 않고 <폴더>/<슬러그> 에 만든다."""
+        kids = self.sb.tmp / "kids"
+        kids.mkdir()
+        git(kids, "init", "-q")
+        (kids / "main.py").write_text("print(1)\n", encoding="utf-8")
+        r = self.simple(kids, "kids\n\n\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"여기에 만듭니다: {(kids / 'kids').resolve()}", r.stdout)
+        self.assertTrue((kids / "kids" / "orchestrator" / "harness.json").is_file())
+        self.assertFalse((kids / "orchestrator").exists())
+        self.assertEqual(git(kids, "rev-parse", "--verify", "-q", "HEAD"), "", "원래 저장소에 커밋을 만들면 안 된다")
+
+    def test_reviewer_sandbox_three_folders(self):
+        """검토원 재현(sb9): 남의 프로젝트가 든 dev/ · 코드 든 git 저장소 kids/ · 빈 폴더. 빈 폴더만 그 자리, 나머지는 <슬러그> 아래."""
+        sb9 = self.sb.tmp / "sb9"
+        dev, kids, empty = sb9 / "dev", sb9 / "kids", sb9 / "empty"
+        (dev / "other-project").mkdir(parents=True)
+        (dev / "other-project" / "package.json").write_text("{}", encoding="utf-8")
+        kids.mkdir()
+        git(kids, "init", "-q")
+        (kids / "app.js").write_text("1\n", encoding="utf-8")
+        empty.mkdir()
+        for cwd, want in ((dev, dev / "kids"), (kids, kids / "kids"), (empty, empty)):
+            r = self.simple(cwd, "kids\n\n\n")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertTrue((want / "orchestrator" / "harness.json").is_file(), f"{cwd} -> {want}")
+        self.assertEqual(sorted(p.name for p in dev.iterdir()), ["kids", "other-project"])
+        self.assertEqual(sorted(p.name for p in kids.iterdir()), [".git", "app.js", "kids"])
+
+    def test_slug_subfolder_taken_asks_other_path(self):
+        """<폴더>/<슬러그> 도 남의 것으로 차 있으면 만들지 않고 다른 경로를 묻는다. 안내에 --force 는 없다."""
+        dev = self.sb.tmp / "dev"
+        (dev / "kids").mkdir(parents=True)
+        (dev / "kids" / "남의것.txt").write_text("x", encoding="utf-8")
+        r = self.simple(dev, "kids\n\n\n")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("빈 폴더에서 다시 실행하거나", r.stdout)
+        self.assertNotIn("--force", r.stdout + r.stderr)
+        self.assertFalse((dev / "kids" / "orchestrator").exists())
+        # 다른 경로를 치면 그곳에. 그곳도 차 있으면 한 번 더 묻는다
+        busy = self.sb.tmp / "busy"
+        busy.mkdir()
+        (busy / "x.txt").write_text("x", encoding="utf-8")
+        other = self.sb.tmp / "새 자리"
+        r = self.simple(dev, f"kids\n\n{busy}\n{other}\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue((other / "orchestrator" / "harness.json").is_file())
+        self.assertFalse((busy / "orchestrator").exists())
+        self.assertEqual((dev / "kids" / "남의것.txt").read_text(encoding="utf-8"), "x")
+
     def test_empty_folder_other_name_is_used_itself(self):
         box = self.sb.tmp / "빈폴더"
         box.mkdir()
