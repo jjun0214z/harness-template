@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "project": {
+    "name": "Acme 여행",
+    "slug": "acme",
+    "github_org": "acme-inc",
+    "owner_title": "대표님"
+  },
+  "harness_repo": {
+    "dir": "orchestrator",
+    "remote": "acme-inc/orchestrator",
+    "base_branch": "main"
+  },
+  "repos": [
+    {
+      "key": "web",
+      "dir": "web",
+      "remote": "acme-inc/web",
+      "base_branch": "develop",
+      "description": "서비스 본체 (Next.js)",
+      "deploy": {
+        "develop": "dev 배포",
+        "main": "상용 배포"
+      },
+      "ask_on_push": [
+        "main"
+      ],
+      "checks": [
+        "pnpm lint",
+        "pnpm typecheck",
+        "pnpm test"
+      ],
+      "stack": "node",
+      "source": "new"
+    },
+    {
+      "key": "api",
+      "dir": "api",
+      "remote": "acme-inc/api",
+      "base_branch": "main",
+      "description": "API 서버 · DB 마이그레이션",
+      "deploy": {
+        "main": "dev DB 마이그레이션"
+      },
+      "ask_on_push": [
+        "main"
+      ],
+      "checks": [
+        "pytest -q"
+      ],
+      "stack": "python",
+      "source": "new"
+    }
+  ],
+  "skills": {
+    "fill": [
+      "code-convention",
+      "security-privacy",
+      "operations",
+      "design"
+    ]
+  },
+  "engines": [
+    "claude",
+    "codex"
+  ],
+  "orca": {
+    "enabled": true,
+    "workspaces_dir": "~/orca/workspaces"
+  },
+  "labels": [
+    "결정대기",
+    "진행중",
+    "하네스",
+    "규칙"
+  ],
+  "platform": {
+    "python": "python3"
+  },
+  "template": {
+    "url": "https://github.com/jjun0214z/harness-template",
+    "ref": "main"
+  }
+}
