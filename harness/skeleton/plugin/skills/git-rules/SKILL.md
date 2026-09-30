@@ -10,7 +10,9 @@ description: Git · 커밋 · 브랜치 규칙(저장소별 기준 브랜치 · 
 - push 는 오케스트레이터만 한다. 작업자는 커밋까지.
 
 ## 2. 저장소별 기준 브랜치
+<!-- harness:begin git-rules-repos (생성기가 관리한다. 이 블록 안은 고치지 않는다) -->
 {{repo_table}}
+<!-- harness:end git-rules-repos -->
 
 ## 3. 작업 공간
 - 과제마다 워크트리: `git -C <저장소> worktree add <프로젝트 폴더>/.work/<저장소>-<슬러그> -b <슬러그> origin/<기준>`.

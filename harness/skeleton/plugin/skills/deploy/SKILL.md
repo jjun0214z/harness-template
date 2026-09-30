@@ -14,7 +14,9 @@ Codex 는 승인 질문을 지원하지 않아 승인 전 push 를 막는다. {{
 - [ ] `git -C <저장소> log --oneline origin/<기준>..<밀 SHA>` 에 내 커밋만 있다.
 
 ## 2. 저장소별 반영 · 승인
+<!-- harness:begin deploy-table (생성기가 관리한다. 이 블록 안은 고치지 않는다) -->
 {{deploy_table}}
+<!-- harness:end deploy-table -->
 
 ## 3. 반영 뒤
 - 보고에 커밋별 push 여부를 적는다. 커밋 ≠ push ≠ 배포 ≠ 동작.

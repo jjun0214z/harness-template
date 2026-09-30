@@ -42,6 +42,8 @@ Git Bash 에서 위 `curl … | bash` 한 줄을 써도 된다(스스로 Windows
 
 에이전트로 할 때: Claude 또는 Codex 에게 **「jjun0214z/harness-template 로 셋업해」**.
 
+설치가 끝나면 그 하네스 폴더에서 `claude`(또는 `codex`)를 열고 **「시작해」**라고 한다. 상태를 보고 지금 할 것 한 개만 안내한다(`start` 스킬). 생성된 `README.md` 에 같은 안내가 남는다.
+
 <details><summary>다른 방법 (gh 가 있거나, 무인으로)</summary>
 
 ```sh
@@ -118,13 +120,13 @@ gh · GitHub 로그인은 **선택**이다. 없으면 로컬 하네스만 만들
 | --- | --- | --- |
 | `CLAUDE.md` | 오케스트레이터 지침 · 저장소 지도 · 맡기는 방법 | 관리 블록만 바뀌고 「프로젝트 메모」는 그대로 |
 | `AGENTS.md` | Codex 진입점(CLAUDE.md 를 읽게만) | 설정대로 |
-| `plugins/<슬러그>/` | 공통 플러그인: push 가드 훅 · 핵심 요약 · 작업자(`<키>-worker`) · 조사원 · 검토원 · `setup` 스킬 | 설정대로 (`core.md` 는 관리 블록만) |
-| `plugins/<슬러그>/skills/` | 절차 뼈대 5개(absolute-rules · work-method · git-rules · deploy · task-brief) + 채울 자리 틀(code-convention · security-privacy · operations · design 중 고른 것) | **없을 때만 만든다** |
+| `plugins/<슬러그>/` | 공통 플러그인: push 가드 훅 · 핵심 요약 · 작업자(`<키>-worker`) · 조사원 · 검토원 · `setup` · `start` 스킬 | 설정대로 (`core.md` 는 관리 블록만) |
+| `plugins/<슬러그>/skills/` | 절차 뼈대 5개(absolute-rules · work-method · git-rules · deploy · task-brief) + 채울 자리 틀(code-convention · security-privacy · operations · design 중 고른 것) | **없을 때만 만든다.** 단 설정에서 만든 표(저장소 지도 · 배포 · 검사 명령 · 맡기는 방법)는 관리 블록이라 다시 맞춘다 |
 | `.claude/settings.json` · `.claude-plugin/marketplace.json` | Claude 를 골랐을 때 | 설정대로 |
 | `.codex/hooks.json` · `.codex/agents/*.toml` · `.agents/plugins/marketplace.json` | Codex 를 골랐을 때 | 설정대로 |
 | `scripts/orca-*.sh` | Orca 를 골랐을 때(bash) | 설정대로 |
 | `harness/` | 셋업 엔진 · 생성기 · 저장소 훅(규칙 보호 · 하네스 동기화) · 작업 공간 정리 | `update` 로 템플릿에서 |
-| `상황판.md` · `docs/기록/README.md` | 지금 집중 한 장 · 근거 기록 규칙 | 없을 때만 |
+| `README.md` · `상황판.md` · `docs/기록/README.md` | 설치한 사람용 안내 한 장(「하고 싶은 것 → 이렇게 말한다」) · 지금 집중과 남은 준비 체크리스트 · 근거 기록 규칙 | 없을 때만 |
 | 코드 저장소마다 | `README.md` · `.gitignore` · `CLAUDE.md` · `AGENTS.md` · 플러그인을 켜는 `.claude/settings.json` + 첫 커밋 | 이미 있으면 건드리지 않는다 |
 
 ## 작업 정리 (오프라인 = 끝난 작업)

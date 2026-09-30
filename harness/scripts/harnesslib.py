@@ -31,7 +31,8 @@ MIN_PYTHON = (3, 9)
 MIN_NODE_MAJOR = 22
 ENGINES = ("claude", "codex")
 DEFAULT_LABELS = ("결정대기", "진행중", "하네스", "규칙")
-# 규칙 스킬. 절차 뼈대(범용)와 채울 자리(프로젝트 내용) 두 종류.
+# 규칙 스킬. 생성기가 주인인 것(내용이 상태 판정뿐이라 사람이 채울 자리가 없다) · 절차 뼈대(범용) · 채울 자리(프로젝트 내용) 세 종류.
+MANAGED_SKILLS = ("setup", "start")
 PROCEDURE_SKILLS = ("absolute-rules", "work-method", "git-rules", "deploy", "task-brief")
 FILL_SKILLS = ("code-convention", "security-privacy", "operations", "design")
 # 하네스 저장소에서 조용히 흔들리면 안 되는 경로. guard-rules · guard-push 가 같이 쓴다.
@@ -516,6 +517,16 @@ class Writer:
             self.kept.append(rel)
             return
         self._write(rel, text)
+
+    def seed_blocks(self, rel: str, text: str) -> None:
+        """사람이 채우는 파일인데 생성 관리 블록(설정에서 만든 표)이 섞여 있다:
+        없으면 만들고, 있으면 블록 안만 다시 맞춘다. 블록 밖(사람이 채운 것)은 두고, 블록이 없는 옛 파일도 그대로 둔다."""
+        path = self.root / rel
+        if not path.is_file():
+            self._write(rel, text)
+            return
+        self.kept.append(rel)
+        self._write(rel, replace_blocks(path.read_text(encoding="utf-8"), text))
 
     def mixed(self, rel: str, text: str) -> None:
         """관리 블록 + 사람 칸이 섞인 파일: 있으면 블록만 바꾼다."""

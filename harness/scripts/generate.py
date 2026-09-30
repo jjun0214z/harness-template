@@ -4,7 +4,8 @@
 사용: python3 harness/scripts/generate.py [--root <하네스 폴더>] [--dry-run]
 - 생성기가 주인인 파일(AGENTS.md · 작업자 · manifest · 훅 설정 · 플러그인 스크립트)은 설정대로 다시 맞춘다.
 - CLAUDE.md · core.md 는 관리 블록만 바꾸고 블록 밖(사람이 적은 곳)은 둔다.
-- 규칙 스킬 본문 · 상황판.md · docs/기록/README.md 는 없을 때만 만든다(사람이 채운 것을 덮지 않는다).
+- 규칙 스킬 본문 · README.md · 상황판.md · docs/기록/README.md 는 없을 때만 만든다(사람이 채운 것을 덮지 않는다).
+  규칙 스킬 안에서 설정으로 만든 표(저장소 지도 · 배포 · 검사 명령 · 맡기는 방법)만 관리 블록으로 다시 맞춘다.
 - 전에 만들었는데 설정이 바뀌어 필요 없어진 관리 파일은 지운다(.harness-manifest.json 으로 추적).
 두 번 돌려도 결과가 같다(내용이 같으면 파일을 건드리지 않는다).
 """
@@ -43,11 +44,43 @@ def deploy_text(r: dict) -> str:
     return " · ".join(f"{b} = {m}" for b, m in d.items())
 
 
+def tracker_text(cfg: dict, labels: str) -> Dict[str, str]:
+    """작업 추적처를 가리키는 문장. 원격이 없으면 이슈를 쓸 수 없으니 `상황판.md` 를 가리킨다.
+    없는 저장소 이름(`<폴더> 저장소`)을 만들어 `gh issue list -R` 에 넣지 않는다."""
+    h, py = cfg["harness_repo"], cfg["platform"]["python"]
+    remote = h.get("remote")
+    if remote:
+        return {
+            "tracker": f"GitHub Issues `{remote}`",
+            "tracker_labels": f"GitHub Issues `{remote}` (라벨 {labels})",
+            "tracker_row": f"| GitHub Issues `{remote}` | **작업 추적의 주인.** 라벨 {labels} |",
+            "board_row": "| `상황판.md` | 지금 집중하는 것 한 장. 목록은 이슈가 갖는다 |",
+            "board_intro": f"지금 집중하는 것 한 장. 목록은 GitHub Issues `{remote}` 가 갖고, 여기는 가리키기만 한다.",
+            "session_open": f"`상황판.md` 와 열린 이슈(`gh issue list -R {remote}`)부터 본다",
+            "record_from": f"이슈(`{remote}`)에서 링크한다",
+            "bug_where": f"이슈(`{remote}`)에 등록한다",
+            "status_step": "일의 상태는 이슈에 남긴다: 시작하면 `진행중`, 결정이 필요하면 `결정대기`, 끝나면 커밋을 적고 닫는다",
+        }
+    note = "원격이 없어 아직 이슈를 쓰지 않는다"
+    return {
+        "tracker": f"하네스 `상황판.md` ({note})",
+        "tracker_labels": f"하네스 `상황판.md` ({note})",
+        "tracker_row": f"| GitHub Issues | **작업 추적의 주인이 될 자리.** 원격이 없어 아직 쓸 수 없다. 원격을 만든 뒤 "
+                       f"`{py} harness/scripts/bootstrap.py run --create-github` 을 돌리면 라벨({labels})까지 만든다. "
+                       "그때까지는 `상황판.md` 를 쓴다 |",
+        "board_row": "| `상황판.md` | **지금은 작업 추적의 주인.** 지금 집중하는 것과 남은 준비 한 장. 원격을 만들면 목록은 이슈가 갖는다 |",
+        "board_intro": "지금 집중하는 것과 남은 준비 한 장. 원격이 없어 지금은 이 파일이 작업 추적의 주인이다. 원격을 만들면 목록은 이슈가 갖는다.",
+        "session_open": f"`상황판.md` 부터 본다({note})",
+        "record_from": "`상황판.md` 에서 링크한다",
+        "bug_where": "`상황판.md` 「결정 대기」에 적는다(원격을 만들면 이슈로 옮긴다)",
+        "status_step": "일의 상태는 `상황판.md` 에 남긴다(원격을 만들면 이슈와 라벨 `진행중` · `결정대기` 로 옮긴다)",
+    }
+
+
 def context(cfg: dict) -> Dict[str, str]:
     p, h = cfg["project"], cfg["harness_repo"]
     py = cfg["platform"]["python"]  # 안내 명령의 파이썬(mac · Linux python3, Windows py -3 등)
     owner = p["owner_title"]
-    issues = h.get("remote") or f"{h['dir']} 저장소"
     rows = ["| 폴더 | 원격 | 기준 브랜치 | 그 브랜치에 들어가면 | 작업자 |", "| --- | --- | --- | --- | --- |",
             f"| `.` ({h['dir']}) | {h.get('remote') or '-'} | `{h['base_branch']}` | 배포 없음. 하네스 규칙과 실행 장치 | 오케스트레이터 |"]
     for r in cfg["repos"]:
@@ -67,7 +100,8 @@ def context(cfg: dict) -> Dict[str, str]:
             deploy_rows.append(f"| {r['dir']} | `{b}` | {md_escape(meaning) or '-'} | {rows_ok} |")
     checks = ["| 저장소 | 검사 명령 |", "| --- | --- |"]
     for r in cfg["repos"]:
-        checks.append(f"| {r['dir']} | {' · '.join(f'`{c}`' for c in r['checks']) or '<!-- 채울 자리 -->'} |")
+        cmds = " · ".join(f"`{c}`" for c in r["checks"]) or "아직 없다(`harness.json` repos[].checks 에 적는다)"
+        checks.append(f"| {r['dir']} | {cmds} |")
     if hl.orca_on(cfg):
         cleanup = ("Orca 작업자는 작업자 출력의 `bash scripts/orca-finish-worker.sh <dispatch> <워크트리>`, "
                    f"Orca 밖 작업자는 `{py} harness/scripts/finish_worker.py <워크트리>`. "
@@ -75,13 +109,16 @@ def context(cfg: dict) -> Dict[str, str]:
     else:
         cleanup = (f"`{py} harness/scripts/finish_worker.py <워크트리>`. "
                    f"오래 남은 작업 공간은 `{py} harness/scripts/cleanup_worktrees.py` 로 미리 보고 `--apply`(원격에 다 들어간 것만 지운다).")
-    return {
-        "project": p["name"], "owner": owner, "slug": p["slug"], "issues_repo": issues,
-        "labels": " · ".join(f"`{x}`" for x in cfg["labels"]) + " · `repo:<키>`",
+    labels = " · ".join(f"`{x}`" for x in cfg["labels"]) + " · `repo:<키>`"
+    ctx = {
+        "project": p["name"], "owner": owner, "slug": p["slug"], "labels": labels,
         "repo_table": "\n".join(rows), "deploy_table": "\n".join(deploy_rows), "checks_table": "\n".join(checks),
-        "cleanup_line": cleanup, "repo_keys": " | ".join(["harness"] + [r["key"] for r in cfg["repos"]]),
+        "cleanup_line": cleanup,
         "dispatch_table": dispatch_table(cfg), "harness_dir": h["dir"], "py": py,
+        "engine_cmds": " 또는 ".join(f"`{e}`" for e in cfg["engines"]),
     }
+    ctx.update(tracker_text(cfg, labels))
+    return ctx
 
 
 def dispatch_table(cfg: dict) -> str:
@@ -132,7 +169,7 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
 | {owner} 지시를 과제로 쪼갠다 | 코드를 직접 고친다 |
 | 과제를 작업자(플러그인 `{slug}` 의 agents)에게 맡기고 결론만 받는다 | 코드 · 문서를 통째로 읽는다 |
 | 검토원 판정을 받아 push · 배포한다 | 작업자가 본 내용을 다시 읽는다 (의심될 때만) |
-| 이슈에 진행을 남기고 `상황판.md` 에 지금 집중할 것을 가리킨다 | 대화 기억에 기대 판단한다 |
+| 진행과 결정을 기록에 남기고 `상황판.md` 에 지금 집중할 것을 가리킨다 | 대화 기억에 기대 판단한다 |
 
 **머리를 비워 두는 것이 역할이다.** 사실이 필요하면 직접 읽지 말고 `researcher`(조사원)나 해당 저장소 작업자에게 맡긴다.
 
@@ -153,13 +190,14 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
 | 플러그인 `{slug}` (`plugins/{slug}/`) | 모든 저장소와 엔진이 같이 쓰는 스킬 · 작업자 · 안전 훅(push 가드) |
 | `harness/hooks/` | 이 저장소 전용 훅: 규칙 파일 보호 · 원격 하네스 동기화 |
 | `harness/scripts/` | 셋업(`bootstrap.py`) · 생성기(`generate.py`) · 작업자 정리(`finish_worker.py`) · 작업 공간 정리(`cleanup_worktrees.py`) |
-| GitHub Issues `{ctx['issues_repo']}` | **작업 추적의 주인.** 라벨 {ctx['labels']} |
-| `docs/기록/` | 결정의 근거 원본. 이슈에서 링크한다 |
-| `상황판.md` | 지금 집중하는 것 한 장. 목록은 이슈가 갖는다 |
+{ctx['tracker_row']}
+| `docs/기록/` | 결정의 근거 원본. {ctx['record_from']} |
+{ctx['board_row']}
+| `README.md` | 설치한 사람용 안내 한 장. 「하고 싶은 것 → 이렇게 말한다」 |
 {"| `scripts/orca-*.sh` | Orca 작업자 띄우기 · 중간 지시 · 정리 |" + chr(10) if hl.orca_on(cfg) else ""}
 ## 일하는 순서
 
-1. 세션을 열면 `상황판.md` 와 열린 이슈(`gh issue list -R {ctx['issues_repo']}`)부터 본다.
+1. 세션을 열면 {ctx['session_open']}.
 2. 지시를 과제로 쪼갠다. **과제 1 = 저장소 1.** 같은 저장소에 작업자를 여럿 둘 때는 과제마다 워크트리 · 브랜치를 따로 쓰고 파일 범위를 나눠 적는다.
 3. 작업자에게 넘기는 글은 `task-brief` 스킬 형식을 따른다. 맡기는 방법:
 
@@ -167,8 +205,8 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
 
 4. 작업자 보고(바꾼 파일 · 검증 결과 · 한 줄 요약)를 받으면 `reviewer`(검토원)에게 넘긴다. 오케스트레이터는 판정과 근거만 본다.
 5. push · 배포는 `deploy` 스킬을 따른다. 작업자는 push 하지 않는다.
-6. 일의 상태는 이슈에 남긴다: 시작하면 `진행중`, 결정이 필요하면 `결정대기`, 끝나면 커밋을 적고 닫는다.
-7. 근거가 붙은 보고(명령과 출력, 파일과 줄)는 `docs/기록/YYYY-MM-DD-제목.md` 로 남기고 이슈에서 링크한다.
+6. {ctx['status_step']}.
+7. 근거가 붙은 보고(명령과 출력, 파일과 줄)는 `docs/기록/YYYY-MM-DD-제목.md` 로 남기고 {ctx['record_from']}.
 8. push 가 끝나면 `deploy` 스킬 「작업 공간 · 앱 세션 정리」대로 정리한다: 작업자 정리(finish) → Codex 자동 보관 → Claude 앱 세션은 브라우저 도구로 **링크가 `/code/<bridgeSessionId>` 로 맞고 오프라인인 것만 보관** → 보관한 제목을 보고. 작업 중 · 응답 대기 세션은 건드리지 않는다.
 
 ## {owner}께 보고
@@ -207,8 +245,9 @@ def core_md(cfg: dict, ctx: Dict[str, str]) -> str:
     engine = ("- 작업자는 Orca 로 해당 저장소 워크트리에 띄운다(`scripts/orca-worker.sh`). 도구가 실패하면 조용히 서브에이전트로 바꾸지 않고 알린다."
               if hl.orca_on(cfg) else
               "- 작업자는 해당 저장소의 격리 워크트리(서브에이전트 · `claude --worktree` · Codex 앱 워크트리)에서만 일한다.")
-    skills = [s for s in hl.PROCEDURE_SKILLS] + list(cfg["skills"]["fill"])
-    when = {"absolute-rules": "모든 작업 시작 전 · 새 지시가 기준을 건드릴 때", "work-method": "재거나 판정 · 보고하기 전",
+    skills = ["start"] + [s for s in hl.PROCEDURE_SKILLS] + list(cfg["skills"]["fill"])
+    when = {"start": "설치 직후 · 「시작해」 · 「뭐부터 해」 · 「다음 뭐야」 (지금 할 것 한 개를 고른다)",
+            "absolute-rules": "모든 작업 시작 전 · 새 지시가 기준을 건드릴 때", "work-method": "재거나 판정 · 보고하기 전",
             "git-rules": "커밋 · push · 브랜치 작업 전", "deploy": "push 직전", "task-brief": "작업자에게 과제를 넘기기 직전",
             "code-convention": "코드 수정 · 커밋 전", "security-privacy": "API · 권한 · 개인정보를 건드리기 전",
             "operations": "환경변수 · 배포 설정 · DB 변경 전 · 장애", "design": "화면 · 색 · 아이콘 · 이미지 작업 전"}
@@ -235,7 +274,7 @@ def core_md(cfg: dict, ctx: Dict[str, str]) -> str:
 - 커밋 메시지: `type(scope): 요약` (feat · fix · docs · chore · refactor).
 
 ## 기록
-- 작업 기록은 GitHub Issues `{ctx['issues_repo']}`. 근거는 하네스 `docs/기록/`.
+- 작업 기록은 {ctx['tracker']}. 근거는 하네스 `docs/기록/`.
 
 ## 어떤 스킬을 언제 읽나
 | 스킬 | 언제 |
@@ -302,7 +341,7 @@ tools: Read, Grep, Glob, Bash
 너는 {p['name']} **조사원**이다. 질문 하나에 사실로 답하고, 아무것도 고치지 않는다.
 
 ## 규칙
-- 작업 규칙의 주인은 `{slug}` 플러그인 스킬과 각 저장소 `.claude/rules/` 다. 규칙을 묻는 질문이면 거기부터 본다.
+- 작업 규칙의 주인은 `{slug}` 플러그인 스킬이다. 규칙을 묻는 질문이면 거기부터 본다. 해당 저장소에 `.claude/rules/` 가 있으면 그것도 함께 본다(없는 하네스도 있다).
 - 파일 수정 · 커밋 · push 하지 않는다. Bash 는 읽기 명령(`git log` · `git show` · `grep` · `ls` 등)에만 쓴다.
 - 답마다 근거를 붙인다: 파일 경로와 줄, 또는 실행한 명령과 출력.
 - 확인 못 한 것은 「확인 못 함」, 추정은 「추정」이라고 쓴다. 사실의 주인은 코드 · DB · git 이다.
@@ -326,7 +365,7 @@ tools: Read, Grep, Glob, Bash
 ## 보는 순서
 1. **범위**: `git -C <저장소> log --oneline origin/<기준 브랜치>..<SHA>` 에 작업자 커밋만 있는가. 남의 커밋이 끼었으면 멈추고 보고한다.
 2. **diff**: `git -C <저장소> diff origin/<기준 브랜치>...<SHA>`. 과제 밖 수정이 섞였는가.
-3. **규칙**: 대상 저장소 `.claude/rules/` 와 `{slug}` 플러그인 스킬 중 해당하는 것. `absolute-rules` 는 항상. 위반은 자리와 절 · 줄을 붙인다.
+3. **규칙**: `{slug}` 플러그인 스킬 중 해당하는 것(`absolute-rules` 는 항상). 대상 저장소에 `.claude/rules/` 가 있으면 그것도 본다(없는 하네스도 있다). 위반은 자리와 절 · 줄을 붙인다.
 4. **검증**: 작업자가 적은 검증 명령을 직접 다시 돌린다(읽기 전용 명령과 테스트 · 검사만). 출력이 없으면 검증 없음으로 본다.
 
 ## 금지
@@ -343,16 +382,84 @@ tools: Read, Grep, Glob, Bash
 """
 
 
+def setup_checklist(cfg: dict, ctx: Dict[str, str]) -> List[str]:
+    """설치 직후 남은 준비. 지금 상태에서 참인 줄만 만든다(할 수 없는 일을 할 일로 적지 않는다)."""
+    py = ctx["py"]
+    items = []
+    if not cfg["repos"]:
+        items.append(f"- [ ] **코드 저장소 붙이기** (`{py} harness/scripts/bootstrap.py add-repo`). 이것이 먼저다. "
+                     "저장소가 없으면 규칙의 채울 자리도 채울 수 없다")
+    if not cfg["harness_repo"].get("remote"):
+        items.append(f"- [ ] **하네스 원격 만들기.** 이슈 추적 · 라벨이 여기서 켜진다 "
+                     f"(원격을 만든 뒤 `{py} harness/scripts/bootstrap.py run --create-github`)")
+    items.append(f"- [ ] **규칙의 「채울 자리」 채우기** (`plugins/{cfg['project']['slug']}/skills/` 중 "
+                 f"{' · '.join(cfg['skills']['fill']) or '해당하는 것'}). 붙인 저장소에 필요한 것만")
+    return items
+
+
 def board_md(cfg: dict, ctx: Dict[str, str]) -> str:
+    checklist = "\n".join(setup_checklist(cfg, ctx))
     return f"""# 상황판
 
-> 지금 집중하는 것 한 장. 목록은 GitHub Issues `{ctx['issues_repo']}` 가 갖고, 여기는 가리키기만 한다.
+> {ctx['board_intro']}
 
 ## 지금 집중
-<!-- 채울 자리: 이슈 번호와 한 줄 -->
+
+**설치 직후입니다. 남은 준비가 아래에 있습니다.** 위에서부터 하나씩 합니다.
+무엇부터 할지 모르겠으면 이 폴더에서 {ctx['engine_cmds']} 를 열고 「시작해」라고 말하면 지금 할 것 한 개를 안내합니다.
+
+{checklist}
+
+위가 다 끝나면 이 절을 지우고 지금 집중하는 것 한 줄(이슈 번호와 제목)로 바꾼다.
 
 ## 결정 대기
 <!-- 채울 자리: `결정대기` 라벨 이슈 -->
+"""
+
+
+def readme_md(cfg: dict, ctx: Dict[str, str]) -> str:
+    """설치한 사람이 폴더를 열었을 때 읽는 안내 한 장. 처음 한 번만 만들고 다시 생성해도 덮지 않는다."""
+    p, h = cfg["project"], cfg["harness_repo"]
+    py = ctx["py"]
+    repos = ", ".join(f"`{r['key']}`" for r in cfg["repos"]) or "없음(아래 「저장소 추가해」로 붙인다)"
+    remote = f"`{h['remote']}`" if h.get("remote") else "없음(로컬만. 만들면 이슈 추적 · 라벨이 켜진다)"
+    engines = " · ".join({"claude": "Claude", "codex": "Codex"}[e] for e in cfg["engines"])
+    return f"""# {p['name']} 하네스
+
+이 폴더가 **오케스트레이터**입니다. 여기서 {ctx['engine_cmds']} 를 열고 아래 표의 말을 그대로 하시면 됩니다.
+명령이나 경로를 외우지 않아도 됩니다. 에이전트가 지금 상태를 보고 다음 할 것을 안내합니다.
+
+| 하고 싶은 것 | 이렇게 말한다 |
+| --- | --- |
+| 지금 뭐부터 할지 모르겠다 | **시작해** |
+| 코드 저장소를 붙이고 싶다 | **저장소 추가해** |
+| 제대로 깔렸는지 보고 싶다 | **점검해** |
+| 처음부터 다시 · 다른 기기에 깔고 싶다 | **셋업해** |
+
+## 지금 상태 (설치할 때 기준)
+
+| 항목 | 값 |
+| --- | --- |
+| 코드 저장소 | {repos} |
+| 하네스 원격 | {remote} |
+| 엔진 | {engines} |
+
+남은 준비는 `상황판.md` 「지금 집중」에 체크리스트로 있습니다.
+
+## 어느 파일이 무슨 역할인가
+
+| 파일 | 역할 |
+| --- | --- |
+| `상황판.md` | 지금 집중하는 것 · 남은 준비 한 장 |
+| `CLAUDE.md` | 오케스트레이터 지침 · 저장소 지도 · 일하는 순서 |
+| `harness.json` | 설정 원본 한 장(저장소 · 엔진 · Orca). 고친 뒤 `{py} harness/scripts/generate.py` |
+| `plugins/{p['slug']}/skills/` | 규칙 스킬. 「채울 자리」는 사람이 채운다 |
+| `docs/기록/` | 결정의 근거(명령과 출력, 파일과 줄) |
+
+터미널에서 직접 할 때: 저장소 추가 `{py} harness/scripts/bootstrap.py add-repo` ·
+점검 `{py} harness/scripts/bootstrap.py doctor` · 템플릿 갱신 `{py} harness/scripts/bootstrap.py update`.
+
+> 이 파일은 처음 한 번만 만듭니다. 고쳐도 다시 생성할 때 덮지 않습니다.
 """
 
 
@@ -361,7 +468,7 @@ def records_readme(cfg: dict, ctx: Dict[str, str]) -> str:
 
 - 파일 이름: `YYYY-MM-DD-제목.md`. 한 파일 = 한 조사 또는 한 결정.
 - 담는 것: 실행한 명령과 출력, 파일과 줄, 누가 · 언제 쟀나. 결론만 남기지 않는다.
-- 이슈(`{ctx['issues_repo']}`)에서 링크한다. 고쳐 쓰지 않고 쌓는다(틀린 것은 새 기록에서 정정한다).
+- {ctx['record_from']}. 고쳐 쓰지 않고 쌓는다(틀린 것은 새 기록에서 정정한다).
 """
 
 
@@ -517,9 +624,12 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
     managed(f"{pdir}/agents/reviewer.md", reviewer_md(cfg))
     for r in cfg["repos"]:
         managed(f"{pdir}/agents/{r['key']}-worker.md", worker_md(cfg, r))
-    managed(f"{pdir}/skills/setup/SKILL.md", (SKELETON / "plugin" / "skills" / "setup" / "SKILL.md").read_text(encoding="utf-8"))
+    # setup · start 는 채울 자리가 없고 상태 판정만 담으므로 생성기가 주인이다(템플릿이 바뀌면 update 로 들어온다).
+    for s in hl.MANAGED_SKILLS:
+        managed(f"{pdir}/skills/{s}/SKILL.md", render((SKELETON / "plugin" / "skills" / s / "SKILL.md").read_text(encoding="utf-8"), ctx))
+    # 나머지 규칙 스킬은 사람이 채운다: 없을 때만 만들고, 설정에서 만든 표(관리 블록)만 다시 맞춘다.
     for s in list(hl.PROCEDURE_SKILLS) + list(cfg["skills"]["fill"]):
-        w.seed(f"{pdir}/skills/{s}/SKILL.md", render((SKELETON / "plugin" / "skills" / s / "SKILL.md").read_text(encoding="utf-8"), ctx))
+        w.seed_blocks(f"{pdir}/skills/{s}/SKILL.md", render((SKELETON / "plugin" / "skills" / s / "SKILL.md").read_text(encoding="utf-8"), ctx))
 
     desc = f"{cfg['project']['name']} 공통 하네스: 세션마다 핵심 요약, 규칙 스킬, push 가드 훅, 작업자 · 조사원 · 검토원"
     if hl.has(cfg, "claude"):
@@ -553,6 +663,7 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
                 produced.append(f"scripts/{src.name}")
                 w.copy(src, f"scripts/{src.name}")
 
+    w.seed("README.md", readme_md(cfg, ctx))
     w.seed("상황판.md", board_md(cfg, ctx))
     w.seed("docs/기록/README.md", records_readme(cfg, ctx))
 
