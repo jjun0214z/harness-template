@@ -49,6 +49,7 @@ python 명령은 이 기기에 있는 것을 쓴다(mac · Linux `python3`, Wind
 `PY harness/scripts/bootstrap.py add-repo --repo <조각.json> [--create-github]`
 harness.json 에 더하고, 그 저장소만 준비(새로 만들기 · 받기 · 연결) → 작업자 · 저장소 지도 생성 → 그 저장소에만 플러그인 · 신뢰 · Orca 등록을 한다. 같은 키로 다시 불러도 안전하다.
 사용자가 터미널에서 직접 하려면 `PY harness/scripts/bootstrap.py add-repo` (대화형). 끝나면 바뀐 하네스 파일을 경로를 명시해 커밋한다.
+끝나고 반드시 알린다: **새 작업자 `<키>-worker` 는 지금 열려 있는 세션에서는 보이지 않는다.** 에이전트 목록은 세션이 시작할 때 읽히므로 세션(claude · codex)을 닫고 다시 열어야 쓸 수 있다.
 
 ## 하지 말 것
 - 사용자 동의 없이 도구 설치 · GitHub 저장소 생성 · 전역 설정 변경을 하지 않는다.

@@ -687,14 +687,17 @@ def remote_step(cfg: dict, target: Path, parent: Path, rep: Report, offline: boo
         else:
             rep.todo(f"{name} 원격 연결: gh repo create {remote} --private --source \"{path}\" --push  "
                      f"(gh 없이: GitHub 에서 {remote} 를 만든 뒤 git -C \"{path}\" remote add origin {url} && git -C \"{path}\" push -u origin {base})")
-    if gh_ok and create:
-        remote = cfg["harness_repo"].get("remote")
-        if remote:
-            labels = list(cfg["labels"]) + [f"repo:{r['key']}" for r in cfg["repos"]]
-            bad = [lb for lb in labels if run([gh, "label", "create", lb, "-R", remote, "--force"], timeout=30)[0] != 0]
-            rep.add("이슈 라벨", "실패" if bad else "통과", ("못 만든 것: " + ", ".join(bad)) if bad else " · ".join(labels))
-    elif cfg["harness_repo"].get("remote"):
+    harness_remote = cfg["harness_repo"].get("remote")
+    if gh_ok and create and harness_remote:
+        labels = list(cfg["labels"]) + [f"repo:{r['key']}" for r in cfg["repos"]]
+        bad = [lb for lb in labels if run([gh, "label", "create", lb, "-R", harness_remote, "--force"], timeout=30)[0] != 0]
+        rep.add("이슈 라벨", "실패" if bad else "통과", ("못 만든 것: " + ", ".join(bad)) if bad else " · ".join(labels))
+    elif harness_remote:
         rep.todo(f"이슈 라벨: 원격을 만든 뒤 {hl.boot_cmd('run --create-github')} 을 다시 돌리면 만든다")
+    else:
+        # 원격이 비어 있으면 라벨 이야기가 한 줄도 안 나왔다. 이슈 추적이 원격에 달려 있다는 것을 알린다.
+        rep.todo("이슈 추적: 하네스 원격을 만들면 이슈 · 라벨을 쓸 수 있다"
+                 f"(만든 뒤 {hl.boot_cmd('run --create-github')} 이 라벨 {' · '.join(cfg['labels'])} 까지 만든다). 그때까지는 `상황판.md` 를 쓴다")
 
 
 # ---------------------------------------------------------------- 엔진 설치
@@ -1115,8 +1118,21 @@ def cmd_run(args) -> int:
         orca_step(cfg, target, parent, kind, rep)
     doctor(target, kind, args.offline, rep, tools=False)
     say("\n" + rep.table())
-    say(f"\n다음: 규칙 스킬의 「채울 자리」를 채운다. 저장소는 {hl.boot_cmd('add-repo')} 로 더한다. 템플릿이 갱신되면 하네스 폴더({target})에서 {hl.boot_cmd('update')}")
+    say("\n" + next_steps(cfg, target))
     return 1 if rep.failed() else 0
+
+
+def next_steps(cfg: dict, target: Path) -> str:
+    """install 의 마지막 사람용 출력. 외울 것은 **폴더 하나와 「시작해」 한 마디**뿐이게 한다.
+    「채울 자리」는 첫 할 일이 아니다: 저장소가 있어야 채울 수 있고, 갓 설치한 하네스는 저장소가 0개일 수 있다.
+    남은 준비는 화면이 아니라 하네스 안의 파일(README.md · 상황판.md)에 남고, start 스킬이 상태를 보고 하나씩 안내한다."""
+    engines = " 또는 ".join(f"`{e}`" for e in cfg["engines"])
+    return "\n".join([
+        f"하네스가 준비됐습니다: {target}",
+        f"다음: 그 폴더에서 {engines} 를 열고 「시작해」라고 하세요. 남은 준비를 순서대로 하나씩 안내합니다.",
+        "막히면 「점검해」 · 처음부터 다시 잡으려면 「셋업해」라고 하세요.",
+        f"같은 안내가 {target / 'README.md'} 와 {target / '상황판.md'} 에도 남아 있습니다.",
+    ])
 
 
 def target_problem(target: Path, force: bool) -> Optional[str]:
@@ -1192,8 +1208,16 @@ def cmd_add_repo(args) -> int:
     else:
         install_step(sub, target, parent, kind, rep)
         orca_step(sub, target, parent, kind, rep)
+    # 새 작업자 정의는 세션이 시작할 때 읽힌다: 이미 열려 있는 세션에서는 그 이름을 부를 수 없다(실측: Agent type not found).
+    workers = " · ".join(f"`{k}-worker`" for k in added)
+    if added:
+        rep.todo(f"새 작업자 {workers} 를 쓰려면 세션(claude · codex)을 닫고 다시 연다. "
+                 "에이전트 목록은 세션이 시작할 때 읽히므로 지금 열려 있는 세션에서는 그 이름을 찾지 못한다")
     say(rep.table())
     say(f"\n더한 저장소: {', '.join(added) or '없음(이미 있음)'}. 하네스 변경(harness.json · 작업자 · 지도)을 보고 경로를 명시해 커밋한다")
+    if added:
+        say(f"새 작업자 {workers} 는 지금 열려 있는 세션에서는 보이지 않습니다. "
+            "세션(claude · codex)을 닫고 다시 열면 쓸 수 있습니다(에이전트 목록은 세션이 시작할 때 읽힙니다).")
     return 1 if rep.failed() else 0
 
 
