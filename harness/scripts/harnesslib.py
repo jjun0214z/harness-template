@@ -6,6 +6,7 @@ python3 표준 라이브러리만 쓴다(3.9 이상). macOS · Linux · Windows 
 """
 from __future__ import annotations
 
+import datetime as _dt
 import glob
 import json
 import os
@@ -457,21 +458,70 @@ BLOCK_BEGIN = "<!-- harness:begin {name} (생성기가 관리한다. 이 블록 
 BLOCK_END = "<!-- harness:end {name} -->"
 
 
+BLOCK_RE = re.compile(r"<!-- harness:begin (\S+)[^>]*-->\n.*?<!-- harness:end \1 -->\n?", re.S)
+BACKUP_SUFFIX = "harness-bak"  # <파일>.harness-bak-<시각>. Codex 설정 백업과 같은 방식
+
+
 def block(name: str, body: str) -> str:
     return BLOCK_BEGIN.format(name=name) + "\n" + body.rstrip("\n") + "\n" + BLOCK_END.format(name=name) + "\n"
 
 
+def blocks_of(text: str) -> Dict[str, str]:
+    """text 안의 관리 블록: 이름 → 마커까지 포함한 블록 전체."""
+    return {m.group(1): m.group(0) for m in BLOCK_RE.finditer(text)}
+
+
 def replace_blocks(existing: str, fresh: str) -> str:
     """existing 안의 관리 블록만 fresh 의 같은 이름 블록으로 바꾼다. 블록 밖(사람이 채운 부분)은 둔다."""
-    pat = re.compile(r"<!-- harness:begin (\S+)[^>]*-->\n.*?<!-- harness:end \1 -->\n?", re.S)
-    fresh_blocks = {m.group(1): m.group(0) for m in pat.finditer(fresh)}
+    fresh_blocks = blocks_of(fresh)
     if not fresh_blocks:
         return existing
 
     def swap(m: re.Match) -> str:
         new = fresh_blocks.get(m.group(1), m.group(0))
         return new if new.endswith("\n") else new + "\n"
-    return pat.sub(swap, existing)
+    return BLOCK_RE.sub(swap, existing)
+
+
+def _whole_piece(existing: str, old: str) -> bool:
+    """찾은 자리가 **한 덩이로 끝나는가.** 줄 시작에서 시작해야 하고, 바로 뒤가 같은 표 · 인용의 이어지는 줄
+    (`|` · `>` 로 시작)이면 안 된다: 사람이 그 표에 줄을 더해 놓은 것이므로 옛 글은 그 사람 표의 앞토막일 뿐이다.
+    그때 바꾸면 사람이 적은 줄이 블록 밖에 떨어져 나간다 → 건드리지 않는다."""
+    at = existing.find(old)
+    if at < 0 or (at and existing[at - 1] != "\n"):
+        return False
+    return not existing[at + len(old):].startswith(("|", ">"))
+
+
+def insert_blocks(existing: str, fresh: str,
+                  legacy: Dict[str, Iterable[str]]) -> Tuple[str, List[str], List[str]]:
+    """마커가 없는 옛 파일에 관리 블록을 한 번 심는다. 사람이 쓴 글은 절대 덮지 않는다.
+
+    판정 기준은 **옛 생성기 출력의 글자 그대로 재현**이다: `legacy[블록 이름]` 은 옛 생성기가
+    그 자리에 넣었을 후보 글 목록이고, 그 중 하나가 파일 안에 **딱 한 번 · 한 덩이로** 그대로 있을 때만
+    마커로 감싼 새 블록으로 바꾼다. 한 글자라도 다르면(사람이 손댔거나, 설치 때 설정을 모르겠으면)
+    건드리지 않고 이름만 돌려준다. 애매하면 안 건드리는 쪽이다.
+
+    반환: (새 글, 심은 블록 이름, 못 심은 블록 이름)
+    """
+    have = set(blocks_of(existing))
+    done: List[str] = []
+    left: List[str] = []
+    for name, fresh_block in blocks_of(fresh).items():
+        if name in have:
+            continue
+        hits = [o for o in dict.fromkeys(legacy.get(name) or ())
+                if o and existing.count(o) == 1 and _whole_piece(existing, o)]
+        if len(hits) != 1:
+            left.append(name)      # 자리를 못 찾았거나 후보가 여러 개 맞았다 → 건드리지 않는다
+            continue
+        old = hits[0]
+        new = fresh_block if fresh_block.endswith("\n") else fresh_block + "\n"
+        if not old.endswith("\n"):
+            new = new.rstrip("\n")
+        existing = existing.replace(old, new, 1)
+        done.append(name)
+    return existing, done, left
 
 
 class Writer:
@@ -484,6 +534,9 @@ class Writer:
         self.kept: List[str] = []
         self.protect: set = set()     # 사람 파일이라 덮지 않는 경로
         self.first_run = False
+        self.inserted: List[Tuple[str, str]] = []  # (파일, 블록) 마커가 없던 옛 파일에 새로 심은 블록
+        self.stale: List[Tuple[str, str]] = []     # (파일, 블록) 마커가 없고 옛 생성기 글도 아니다 → 사람이 직접 고친다
+        self.backups: List[str] = []               # 심기 전에 남긴 백업 파일
 
     def guard(self, rel: str) -> bool:
         """써도 되나. 처음 생성할 때 이미 있던 파일(사람 것)은 보호 목록에 넣고 쓰지 않는다."""
@@ -518,15 +571,38 @@ class Writer:
             return
         self._write(rel, text)
 
-    def seed_blocks(self, rel: str, text: str) -> None:
+    def backup(self, rel: str) -> None:
+        """구조를 바꾸기 전(블록을 새로 심기 전) 원본을 옆에 남긴다. `.gitignore` 가 걸러 준다."""
+        path = self.root / rel
+        if not path.is_file():
+            return
+        stamp = _dt.datetime.now().strftime("%Y%m%d%H%M%S")
+        dest = path.with_name(f"{path.name}.{BACKUP_SUFFIX}-{stamp}")
+        self.backups.append(str(dest.relative_to(self.root).as_posix()))
+        if not self.dry_run:
+            shutil.copy2(path, dest)
+
+    def seed_blocks(self, rel: str, text: str, legacy: Optional[Dict[str, Iterable[str]]] = None) -> None:
         """사람이 채우는 파일인데 생성 관리 블록(설정에서 만든 표)이 섞여 있다:
-        없으면 만들고, 있으면 블록 안만 다시 맞춘다. 블록 밖(사람이 채운 것)은 두고, 블록이 없는 옛 파일도 그대로 둔다."""
+        없으면 만들고, 있으면 블록 안만 다시 맞춘다. 블록 밖(사람이 채운 것)은 둔다.
+
+        `legacy` 를 주면 마커가 없는 옛 파일도 한 번 고친다: 그 자리가 **옛 생성기 출력 그대로**일 때만
+        마커로 감싸고(백업 후) 새 내용으로 바꾼다. 사람이 손댔으면 건드리지 않고 `stale` 에 적는다."""
         path = self.root / rel
         if not path.is_file():
             self._write(rel, text)
             return
         self.kept.append(rel)
-        self._write(rel, replace_blocks(path.read_text(encoding="utf-8"), text))
+        existing = path.read_text(encoding="utf-8")
+        # 처음 생성(manifest 없음)에 이미 있던 파일은 남의 것이다: 구조를 건드리지 않는다
+        if legacy and not self.first_run:
+            merged, done, left = insert_blocks(existing, text, legacy)
+            self.inserted += [(rel, n) for n in done]
+            self.stale += [(rel, n) for n in left]
+            if merged != existing:
+                self.backup(rel)
+                existing = merged
+        self._write(rel, replace_blocks(existing, text))
 
     def mixed(self, rel: str, text: str) -> None:
         """관리 블록 + 사람 칸이 섞인 파일: 있으면 블록만 바꾼다."""

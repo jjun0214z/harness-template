@@ -145,6 +145,86 @@ def render(text: str, ctx: Dict[str, str]) -> str:
     return text
 
 
+# ------------------------------------------------- 옛 생성물에 관리 블록 심기 (이미 설치한 하네스 고치기)
+#
+# 이 장치가 있기 전 생성기는 규칙 스킬 · 상황판 · 기록 README 를 **처음 한 번만** 만들고(seed) 다시 손대지 않았다.
+# 그래서 이미 설치한 하네스는 설정에서 만든 표(저장소 지도 · 배포 · 검사 명령 · 맡기는 방법 · 기록의 자리)가
+# 영구히 낡은 채 남는다. 마커가 없으니 `replace_blocks` 도 아무것도 하지 못한다.
+#
+# 판정 기준은 **옛 생성기 출력을 글자 그대로 재현해 대조**하는 것 하나다. 아래 `LEGACY_*` 는 옛 생성기가
+# 그 자리에 넣었던 글의 원본이고, `legacy_contexts` 가 그것을 채울 값을 만든다. 파일 안에 그 글이 딱 한 번
+# 그대로 있을 때만 마커로 감싸고 새 내용으로 바꾼다(바꾸기 전 백업). 한 글자라도 다르면 사람이 손댄 것으로
+# 보고 건드리지 않고 `doctor` 에 「직접 고쳐야 한다」로 알린다. 애매하면 안 건드리는 쪽이다.
+LEGACY_SKILL_BLOCKS: Dict[str, Dict[str, List[str]]] = {
+    "git-rules": {"git-rules-repos": ["{{repo_table}}\n"]},
+    "deploy": {"deploy-table": ["{{deploy_table}}\n"],
+               "deploy-cleanup": ["① 작업자 정리(finish): {{cleanup_line}}\n"]},
+    "code-convention": {"checks-table": ["{{checks_table}}\n"]},
+    "task-brief": {"dispatch-table": ["{{dispatch_table}}\n"]},
+    "work-method": {"work-method-records": [
+        "| 무엇 | 어디 |\n"
+        "| --- | --- |\n"
+        "| 할 일 · 진행 · 결정 대기 · 끝난 일 | GitHub Issues `{{issues_repo}}` (라벨 {{labels}}) |\n"
+        "| 결정의 근거(명령과 출력, 파일과 줄) | 하네스 `docs/기록/YYYY-MM-DD-제목.md`, 이슈에서 링크 |\n"
+        "| 지금 집중하는 것 한 장 | 하네스 `상황판.md` (가리키기만 한다) |\n"]},
+    "absolute-rules": {"absolute-rules-tracker": [
+        "- R6. 버그 · 추가요건은 기준 문서에 적지 않는다. 이슈({{issues_repo}})에 등록한다.\n"]},
+}
+LEGACY_BOARD: Dict[str, List[str]] = {
+    "board-intro": ["> 지금 집중하는 것 한 장. 목록은 GitHub Issues `{{issues_repo}}` 가 갖고, 여기는 가리키기만 한다.\n"]}
+LEGACY_RECORDS: Dict[str, List[str]] = {
+    "records-link": ["- 이슈(`{{issues_repo}}`)에서 링크한다. 고쳐 쓰지 않고 쌓는다(틀린 것은 새 기록에서 정정한다).\n"]}
+# 사람이 읽을 절 이름. doctor 가 「어느 파일 어느 절이 낡았나」를 적을 때 쓴다.
+BLOCK_TITLES = {
+    "git-rules-repos": "저장소별 기준 브랜치 표", "deploy-table": "저장소별 반영 · 승인 표",
+    "deploy-cleanup": "작업자 정리 명령", "checks-table": "커밋 전 필수 검사 표",
+    "dispatch-table": "맡기는 방법 표", "work-method-records": "기록의 자리 표",
+    "absolute-rules-tracker": "R6 버그 · 추가요건 기록처", "board-intro": "머리글(작업 추적의 주인)",
+    "records-link": "기록을 어디서 링크하나", "claude-md": "CLAUDE.md 본문", "core": "핵심 요약 본문",
+}
+
+
+def legacy_checks_table(cfg: dict) -> str:
+    """이 장치가 있기 전 생성기의 검사 명령 표(빈 칸이 `<!-- 채울 자리 -->` 였다). 지금 것과 달라서 따로 재현한다."""
+    rows = ["| 저장소 | 검사 명령 |", "| --- | --- |"]
+    for r in cfg["repos"]:
+        rows.append(f"| {r['dir']} | {' · '.join(f'`{c}`' for c in r['checks']) or '<!-- 채울 자리 -->'} |")
+    return "\n".join(rows)
+
+
+def legacy_contexts(cfg: dict, ctx: Dict[str, str]) -> List[Dict[str, str]]:
+    """옛 글을 채울 값. 지금 설정과 **저장소가 0개였던 때**를 함께 본다: 옛 생성기는 규칙 스킬을 설치 때
+    한 번만 만들었으므로 파일에 남은 표는 설치 시점 설정이다(그 뒤 `add-repo` 로 저장소가 늘어도 그대로였다).
+    그 밖의 시점(엔진 · Orca · 프로젝트 이름을 바꾼 뒤)은 재현하지 않는다 → 안 건드리고 알린다."""
+    out = []
+    for c in (cfg, {**cfg, "repos": []}):
+        base = dict(ctx) if c is cfg else dict(context(c))
+        h = c["harness_repo"]
+        base["issues_repo"] = h.get("remote") or f"{h['dir']} 저장소"
+        base["checks_table"] = legacy_checks_table(c)
+        out.append(base)
+    return out
+
+
+def legacy_blocks(templates: Dict[str, List[str]], ctxs: List[Dict[str, str]]) -> Dict[str, List[str]]:
+    """블록 이름 → 옛 생성기가 그 자리에 넣었을 후보 글 목록."""
+    return {name: [render(t, c) for t in tpls for c in ctxs] for name, tpls in templates.items()}
+
+
+def block_where(pairs: List[Tuple[str, str]]) -> str:
+    """(파일, 블록) 목록을 사람이 읽는 「파일 「절 이름」」로."""
+    return " · ".join(f"{rel} 「{BLOCK_TITLES.get(name, name)}」" for rel, name in pairs)
+
+
+def block_lines(w: hl.Writer) -> List[str]:
+    """생성 뒤 사람이 알아야 할 관리 블록 소식: 심은 것 · 백업 · 직접 고쳐야 하는 것."""
+    out = [f"  (관리 블록 심음) {block_where([p])}" for p in w.inserted]
+    out += [f"  (백업) {rel}" for rel in w.backups]
+    out += [f"  (직접 고쳐야 한다) {block_where([p])}: 사람이 고친 자리라 건드리지 않았다. 설정이 바뀌었으면 직접 맞춘다"
+            for p in w.stale]
+    return out
+
+
 # ---------------------------------------------------------------- 문서
 
 def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
@@ -401,8 +481,7 @@ def board_md(cfg: dict, ctx: Dict[str, str]) -> str:
     checklist = "\n".join(setup_checklist(cfg, ctx))
     return f"""# 상황판
 
-> {ctx['board_intro']}
-
+{hl.block("board-intro", "> " + ctx['board_intro'])}
 ## 지금 집중
 
 **설치 직후입니다. 남은 준비가 아래에 있습니다.** 위에서부터 하나씩 합니다.
@@ -468,8 +547,7 @@ def records_readme(cfg: dict, ctx: Dict[str, str]) -> str:
 
 - 파일 이름: `YYYY-MM-DD-제목.md`. 한 파일 = 한 조사 또는 한 결정.
 - 담는 것: 실행한 명령과 출력, 파일과 줄, 누가 · 언제 쟀나. 결론만 남기지 않는다.
-- {ctx['record_from']}. 고쳐 쓰지 않고 쌓는다(틀린 것은 새 기록에서 정정한다).
-"""
+{hl.block("records-link", f"- {ctx['record_from']}. 고쳐 쓰지 않고 쌓는다(틀린 것은 새 기록에서 정정한다).")}"""
 
 
 # ---------------------------------------------------------------- 설정 파일
@@ -609,7 +687,8 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
 
     w.mixed("CLAUDE.md", claude_md(cfg, ctx))
     managed("AGENTS.md", agents_md(cfg))
-    managed(".gitignore", ".DS_Store\n__pycache__/\n*.pyc\n.claude/worktrees/\n.claude/settings.local.json\n.work/\n")
+    managed(".gitignore", ".DS_Store\n__pycache__/\n*.pyc\n.claude/worktrees/\n.claude/settings.local.json\n.work/\n"
+                          f"*.{hl.BACKUP_SUFFIX}-*\n")
     managed(".gitattributes", "* text=auto eol=lf\n*.ps1 text eol=crlf\n*.cmd text eol=crlf\n")
 
     # 플러그인
@@ -628,8 +707,12 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
     for s in hl.MANAGED_SKILLS:
         managed(f"{pdir}/skills/{s}/SKILL.md", render((SKELETON / "plugin" / "skills" / s / "SKILL.md").read_text(encoding="utf-8"), ctx))
     # 나머지 규칙 스킬은 사람이 채운다: 없을 때만 만들고, 설정에서 만든 표(관리 블록)만 다시 맞춘다.
+    # 마커가 없는 옛 파일은 `legacy` 로 그 자리를 찾아 한 번 심는다(사람이 손댔으면 건드리지 않는다).
+    lctx = legacy_contexts(cfg, ctx)
     for s in list(hl.PROCEDURE_SKILLS) + list(cfg["skills"]["fill"]):
-        w.seed_blocks(f"{pdir}/skills/{s}/SKILL.md", render((SKELETON / "plugin" / "skills" / s / "SKILL.md").read_text(encoding="utf-8"), ctx))
+        w.seed_blocks(f"{pdir}/skills/{s}/SKILL.md",
+                      render((SKELETON / "plugin" / "skills" / s / "SKILL.md").read_text(encoding="utf-8"), ctx),
+                      legacy=legacy_blocks(LEGACY_SKILL_BLOCKS.get(s, {}), lctx))
 
     desc = f"{cfg['project']['name']} 공통 하네스: 세션마다 핵심 요약, 규칙 스킬, push 가드 훅, 작업자 · 조사원 · 검토원"
     if hl.has(cfg, "claude"):
@@ -664,8 +747,8 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
                 w.copy(src, f"scripts/{src.name}")
 
     w.seed("README.md", readme_md(cfg, ctx))
-    w.seed("상황판.md", board_md(cfg, ctx))
-    w.seed("docs/기록/README.md", records_readme(cfg, ctx))
+    w.seed_blocks("상황판.md", board_md(cfg, ctx), legacy=legacy_blocks(LEGACY_BOARD, lctx))
+    w.seed_blocks("docs/기록/README.md", records_readme(cfg, ctx), legacy=legacy_blocks(LEGACY_RECORDS, lctx))
 
     # 설정이 바뀌어 필요 없어진 관리 파일 지우기
     # 이 하네스가 새로 만든 코드 저장소: 폴더 → 첫 커밋 SHA(아직 커밋 전이면 빈 문자열). 남의 저장소 판별에 쓴다
@@ -699,6 +782,8 @@ def main(argv=None) -> int:
     print(f"생성: 바뀐 파일 {len(w.changed)} · 사람이 채운 파일 유지 {len(w.kept)}")
     for rel in w.changed:
         print(f"  {rel}")
+    for line in block_lines(w):
+        print(line)
     return 0
 
 
