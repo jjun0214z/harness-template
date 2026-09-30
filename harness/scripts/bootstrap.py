@@ -923,6 +923,48 @@ def hook_smoke(cfg: dict, target: Path, rep: Report) -> None:
     rep.add("훅 핵심 요약", "통과" if ok else "실패", "core.md 를 세션에 넣는다" if ok else "core.md 출력 없음")
 
 
+def generate_cmd(cfg: dict) -> str:
+    return hl.boot_cmd("", python=cfg["platform"]["python"]).replace("bootstrap.py", "generate.py").strip()
+
+
+def stale_note(cfg: dict, w: hl.Writer, rep: Report) -> None:
+    """사람이 고쳐서 생성기가 건드리지 않은 자리를 파일 · 절 이름과 함께 알린다. run · add-repo · doctor 가 같이 쓴다."""
+    if not w.stale:
+        return
+    where = gen.block_where(w.stale)
+    rep.add("설정 표(사람이 고침)", "안내", f"{where} 는 사람이 고친 자리라 건드리지 않는다. 낡았으면 **직접 고쳐야 한다**")
+    rep.todo(f"직접 고쳐야 하는 설정 표: {where}. `{generate_cmd(cfg)}` 는 이 자리를 건드리지 않는다"
+             "(생성기 출력 그대로가 아니면 사람이 쓴 글로 본다). 내용을 보고 직접 맞춘다")
+
+
+def report_blocks(cfg: dict, w: hl.Writer, rep: Report) -> None:
+    """생성 결과 중 관리 블록 소식(심었다 · 직접 고쳐야 한다)을 표에 적는다."""
+    if w.inserted:
+        rep.add("낡은 설정 표", "통과",
+                f"관리 블록 {len(w.inserted)}곳을 심고 갱신했다(바꾸기 전 `.{hl.BACKUP_SUFFIX}-<시각>` 백업): "
+                f"{gen.block_where(w.inserted)}")
+    stale_note(cfg, w, rep)
+
+
+def blocks_step(cfg: dict, target: Path, rep: Report) -> None:
+    """설정에서 만드는 표(관리 블록)가 낡았는지. 고칠 수 있는 것과 사람이 직접 고쳐야 하는 것을 갈라 파일 이름으로 보여 준다.
+    판정은 생성기를 `--dry-run` 으로 돌려 받는다(파일을 쓰지 않는다. 판정 규칙이 생성기 한 곳에만 있게 한다)."""
+    try:
+        w = gen.generate(cfg, target, dry_run=True)
+    except (OSError, ValueError, KeyError) as exc:
+        rep.add("설정 표(관리 블록)", "실패", f"확인하지 못했다: {exc}")
+        return
+    cmd = generate_cmd(cfg)
+    if w.inserted:
+        rep.add("설정 표(관리 블록)", "없음",
+                f"낡은 표 {len(w.inserted)}곳: {gen.block_where(w.inserted)} → `{cmd}` 를 돌리면 갱신한다")
+        rep.todo(f"낡은 설정 표 갱신: `{cmd}` 를 돌린다(바꾸기 전 `.{hl.BACKUP_SUFFIX}-<시각>` 백업을 남긴다). "
+                 f"대상: {gen.block_where(w.inserted)}")
+    else:
+        rep.add("설정 표(관리 블록)", "통과", "설정에서 만드는 표가 모두 최신이다" if not w.stale else "자동으로 맞출 것은 없다")
+    stale_note(cfg, w, rep)
+
+
 def doctor(target: Path, kind: str, offline: bool, rep: Optional[Report] = None, tools: bool = True) -> Report:
     rep = rep or Report()
     rep.add("운영체제", "안내", f"{kind} · python {sys.version.split()[0]}")
@@ -938,6 +980,7 @@ def doctor(target: Path, kind: str, offline: bool, rep: Optional[Report] = None,
         rep.add("생성물", "실패" if missing else "통과", ("빠짐: " + ", ".join(missing[:5])) if missing else f"관리 파일 {len(files)}개")
     except (OSError, ValueError, KeyError):
         rep.add("생성물", "실패", "생성 기록이 없다. generate 를 돌린다")
+    blocks_step(cfg, target, rep)
     hook_smoke(cfg, target, rep)
     parent = hl.git_common_parent(target) or target.parent
     for p, name in [(target, cfg["harness_repo"]["dir"])] + [(hl.repo_path(r, parent), r["dir"]) for r in cfg["repos"]]:
@@ -1103,6 +1146,7 @@ def cmd_run(args) -> int:
     new_repos = repos_step(cfg, parent, rep, args.offline, created_record(target))
     w = gen.generate(cfg, target, created_repos=new_repos)
     rep.add("생성", "통과", f"바뀐 파일 {len(w.changed)} · 사람이 채운 파일 유지 {len(w.kept)} · 원래 있던 파일 보호 {len(w.protect)}")
+    report_blocks(cfg, w, rep)
     for rel in sorted(w.protect):
         rep.todo(f"하네스 {rel} 은 원래 있던 파일이라 덮지 않았다. 템플릿 내용(harness/skeleton 또는 새 폴더에 생성해 본 것)과 직접 합친다")
     if cfg["harness_repo"].get("source") == "local":
@@ -1202,6 +1246,7 @@ def cmd_add_repo(args) -> int:
     new_repos = repos_step(sub, parent, rep, args.offline, created_record(target))
     w = gen.generate(cfg, target, created_repos=new_repos)
     rep.add("생성", "통과", f"바뀐 파일 {len(w.changed)} · 사람이 채운 파일 유지 {len(w.kept)}")
+    report_blocks(cfg, w, rep)
     remote_step(sub, target, parent, rep, args.offline, args.create_github)
     if args.skip_install:
         rep.add("엔진 설치", "건너뜀", "--skip-install")
@@ -1256,6 +1301,8 @@ def cmd_generate(args) -> int:
         return 2
     w = gen.generate(cfg, target)
     say(f"생성: 바뀐 파일 {len(w.changed)} · 사람이 채운 파일 유지 {len(w.kept)}")
+    for line in gen.block_lines(w):
+        say(line)
     return 0
 
 
