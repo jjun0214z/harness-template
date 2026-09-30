@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Orca 작업자 세션을 띄워 과제를 맡긴다. 저장소에 새 워크트리 + 고른 에이전트 세션 하나를 만든다.
 # - 기준 브랜치는 harness.json 저장소 목록을 따른다. 하네스 자체 작업은 'harness' 또는 하네스 폴더 이름.
+#   origin/<기준> 이 있으면 그것, 없으면(원격이 없는 저장소) 로컬 <기준>. 둘 다 없으면 멈춘다.
 # - worker-start 결과가 불명확해도 자동 재실행하지 않는다. 기존 Dispatch 권한을 회수하면 일하는 작업자가 보고할 수 없다.
 # - 모델은 고정하지 않는다. 필요할 때만 ORCA_CLAUDE_MODEL · ORCA_MODEL 로 Claude 에 override 한다.
 #
@@ -20,11 +21,11 @@ done
 engines="$(cfg "' '.join(c['engines'])")"
 [ -n "$agent" ] || { [ -n "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-}}" ] && agent=codex || agent="${engines%% *}"; }
 case " $engines " in *" $agent "*) ;; *) echo "이 하네스가 쓰지 않는 에이전트: $agent (harness.json engines: $engines)"; exit 2 ;; esac
-[ $# -eq 3 ] || { sed -n 7,8p "$0"; exit 2; }
+[ $# -eq 3 ] || { sed -n 8,9p "$0"; exit 2; }   # 위 「사용:」 두 줄
 repo="$1"; name="$2"; spec="$3"
 [ "${spec:0:1}" = "@" ] && spec="$(cat "${spec:1}")"
 info="$(repo_info "$repo")" || { echo "모르는 저장소: $repo (harness.json 에 없다)"; exit 2; }
-read -r dir base_name local_path <<< "$info"; base="origin/$base_name"
+read -r dir base_name local_path <<< "$info"
 spec="$spec
 
 ---
@@ -32,13 +33,20 @@ spec="$spec
 끝나면 $ORCA orchestration send --type worker_done --outcome succeeded --subject \"<한 줄 요약>\" --body \"<바꾼 파일 · 검증 명령과 결과 · 커밋 SHA>\" --task-id <task_id> --dispatch-id <dispatch_id> --from <handle> 로 보고한다(실패면 --outcome failed).
 중간 지시 확인: 커밋마다, 테스트를 돌린 뒤, worker_done 직전에 $ORCA orchestration check --terminal <handle> --json 으로 새 지시를 읽고 따른다. consumer_fenced 가 나오면 멈춘다.
 막히면 $ORCA orchestration send --type escalation --subject \"<무엇이 막혔나>\" --body \"<선택지>\" 로 묻는다."
+# 기준 ref 는 그 저장소에 실제로 있는 것만 쓴다. 원격이 없는 저장소에는 origin/<기준> 이 없다(로컬 기준 브랜치로 떨어진다).
+common="$(git -C "$HARNESS_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$HARNESS_ROOT/.git")"
+projects="${ORCA_PROJECTS_DIR:-$(cd "$(dirname "$common")/.." && pwd)}"
+repo_dir="${local_path:-$projects/$dir}"   # 연결한 저장소는 그 경로 그대로
+has_ref() { git -C "$repo_dir" rev-parse --verify --quiet "$1^{commit}" >/dev/null 2>&1; }
 if [ -n "$base_ref" ]; then
-  common="$(git -C "$HARNESS_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$HARNESS_ROOT/.git")"
-  projects="${ORCA_PROJECTS_DIR:-$(cd "$(dirname "$common")/.." && pwd)}"
-  repo_dir="${local_path:-$projects/$dir}"   # 연결한 저장소는 그 경로 그대로
-  git -C "$repo_dir" rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null || {
-    echo "기준 ref 없음: $repo_dir 에 '$base_ref' 가 없다. 멈춘다."; exit 2; }
+  has_ref "$base_ref" || { echo "기준 ref 없음: $repo_dir 에 '$base_ref' 가 없다. 멈춘다."; exit 2; }
   base="$base_ref"
+elif has_ref "origin/$base_name"; then
+  base="origin/$base_name"
+elif has_ref "$base_name"; then
+  base="$base_name"
+else
+  echo "기준 브랜치 없음: $repo_dir 에 'origin/$base_name' 도 '$base_name' 도 없다. 멈춘다."; exit 2
 fi
 
 coord="${ORCA_TERMINAL_HANDLE:-}"
