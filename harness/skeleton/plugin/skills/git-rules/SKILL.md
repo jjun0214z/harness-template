@@ -19,7 +19,7 @@ description: Git · 커밋 · 브랜치 규칙(저장소별 기준 브랜치 · 
 - 공유 체크아웃에서 `git add -A` · `git commit -a` · `switch` 하지 않는다. add 는 경로를 명시한다.
 
 ## 4. 커밋 메시지
-- `type(scope): 한글 요약`. type = feat · fix · docs · chore · refactor. 보안 수정은 단독 커밋.
+- `type(scope): 한글 요약`. type = feat · fix · docs · chore · refactor · test(검사를 더하거나 고칠 때). 보안 수정은 단독 커밋.
 <!-- 채울 자리: scope 목록, 이슈 번호 붙이는 방식 -->
 
 ## 5. push 전

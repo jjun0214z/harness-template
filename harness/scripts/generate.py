@@ -155,6 +155,15 @@ def render(text: str, ctx: Dict[str, str]) -> str:
 # 그 자리에 넣었던 글의 원본이고, `legacy_contexts` 가 그것을 채울 값을 만든다. 파일 안에 그 글이 딱 한 번
 # 그대로 있을 때만 마커로 감싸고 새 내용으로 바꾼다(바꾸기 전 백업). 한 글자라도 다르면 사람이 손댄 것으로
 # 보고 건드리지 않고 `doctor` 에 「직접 고쳐야 한다」로 알린다. 애매하면 안 건드리는 쪽이다.
+#
+# 주의(퇴행 함정): 아래 `git-rules-repos` · `dispatch-table` · `deploy-table` · `deploy-cleanup` 4개는 옛 글 후보가
+# `{{repo_table}}` 처럼 **지금 생성기가 만드는 표 그 자체**다(옛 생성기도 같은 함수를 썼기 때문에 맞는다).
+# 즉 이 4개는 생성기를 거울로 쓴다. 그 표 함수가 틀어지면 옛 글 후보도 똑같이 틀어져
+# `tests/test_migrate_blocks.py` 의 검사가 퇴행을 잡지 못하고, 옛 설치본에서 이관이 조용히 멈춘다
+# (블록을 못 심고 「직접 고쳐야 한다」로만 넘어가 사용자는 표가 낡은 줄 모른다).
+# 그래서 `LEGACY_*` · `legacy_contexts` 를 건드릴 때는 검사 통과만으로 끝내지 말고
+# **진짜 옛 템플릿(커밋 `f51adf7`) 설치본과 대조해 다시 재라.**
+# 2026-09-30 검토: 실제 `f51adf7` 설치본에 update 를 돌려 8개 블록이 모두 심기는 것을 확인했다.
 LEGACY_SKILL_BLOCKS: Dict[str, Dict[str, List[str]]] = {
     "git-rules": {"git-rules-repos": ["{{repo_table}}\n"]},
     "deploy": {"deploy-table": ["{{deploy_table}}\n"],
@@ -351,7 +360,7 @@ def core_md(cfg: dict, ctx: Dict[str, str]) -> str:
 
 ## git (`git-rules` 스킬)
 - 작업은 공유 체크아웃이 아니라 과제마다 워크트리에서. add 는 경로를 명시한다.
-- 커밋 메시지: `type(scope): 요약` (feat · fix · docs · chore · refactor).
+- 커밋 메시지: `type(scope): 요약` (feat · fix · docs · chore · refactor · test).
 
 ## 기록
 - 작업 기록은 {ctx['tracker']}. 근거는 하네스 `docs/기록/`.
