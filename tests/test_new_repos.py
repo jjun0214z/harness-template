@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+import sys
 import unittest
 
 from helpers import TEMPLATE, Sandbox, tree_snapshot
@@ -78,7 +79,7 @@ class NewRepos(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(subprocess.run(["git", "-C", str(self.sb.projects / "web"), "rev-parse", "HEAD"],
                                         capture_output=True).returncode != 0, True, "이름 · 메일 없이 커밋했다")
-        self.assertIn("첫 커밋: git config --global user.name", r.stdout)
+        self.assertIn('git config --global user.name "<이름>"', r.stdout)
 
     def test_gh_logged_in_creates_private_remote(self):
         self.sb.fake_tools(("gh",))
@@ -180,6 +181,63 @@ class Update(unittest.TestCase):
         self.assertFalse((target / "harness/scripts/사라진파일.py").exists())
         self.assertEqual(skill.read_text(encoding="utf-8"), "사람이 채움\n")
         self.assertFalse((target / ".harness-template").exists(), "템플릿 표시가 하네스에 복사됐다")
+
+
+NOID = {"GIT_AUTHOR_NAME": "", "GIT_AUTHOR_EMAIL": "", "GIT_COMMITTER_NAME": "", "GIT_COMMITTER_EMAIL": ""}
+
+
+def todo_section(out: str) -> str:
+    """「나중에 할 일」 목록만(뒤의 안내 문단 전까지)."""
+    part = out.split("## 나중에 할 일", 1)[1] if "## 나중에 할 일" in out else ""
+    return part.split("\n\n하네스가 준비됐습니다", 1)[0]
+
+
+class NoIdentityFirstCommit(unittest.TestCase):
+    """이름 · 메일이 없는 새 기기: 첫 커밋 안내는 신원 설정 하나(파일 목록 · add 명령 없음), 다시 돌리면 스스로 커밋한다."""
+
+    def setUp(self):
+        self.sb = Sandbox()
+        self.addCleanup(self.sb.cleanup)
+        self.target = self.sb.projects / "orchestrator"
+
+    def test_one_identity_todo_then_rerun_commits(self):
+        r = self.sb.bootstrap("run", "--config", str(new_config(self.sb)), "--target", str(self.target),
+                              "--offline", "--non-interactive", "--skip-install", **NOID)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        todos = todo_section(r.stdout)
+        items = [ln for ln in todos.splitlines() if ln[:1].isdigit() and "첫 커밋" in ln]
+        self.assertEqual(len(items), 1, "같은 원인의 첫 커밋 안내가 여러 번 나왔다:\n" + todos)
+        self.assertIn("대상 저장소: web, api, orchestrator", todos)
+        self.assertIn('git config --global user.name "<이름>"', todos)
+        self.assertIn('git config --global user.email "<메일>"', todos)
+        self.assertIn("bootstrap.py run", todos)
+        for bad in ("add -A", "add --", "add .", "harness/scripts/bootstrap.py\"", "상황판.md\"", "commit -m"):
+            self.assertNotIn(bad, todos, f"안내에 {bad!r} 가 들어갔다")
+        for d in ("orchestrator", "web", "api"):
+            self.assertNotEqual(subprocess.run(["git", "-C", str(self.sb.projects / d), "rev-parse", "HEAD"],
+                                               capture_output=True).returncode, 0, f"{d}: 이름 · 메일 없이 커밋했다")
+        # 사람 파일: 커밋에 들어가면 안 된다
+        (self.target / ".env").write_text("SECRET=1\n", encoding="utf-8")
+        (self.sb.projects / "web" / "notes.txt").write_text("mine\n", encoding="utf-8")
+        env = self.sb.env()  # 이름 · 메일이 생긴 상태
+        r = subprocess.run([sys.executable, str(self.target / "harness" / "scripts" / "bootstrap.py"), "run",
+                            "--offline", "--non-interactive", "--skip-install"],
+                           capture_output=True, text=True, env=env, cwd=str(self.target), timeout=300)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("첫 커밋", todo_section(r.stdout), "신원이 생겼는데 첫 커밋 안내가 남았다")
+        self.assertEqual(git(self.target, "log", "--format=%s", env=env), "chore: 하네스 초기 생성")
+        self.assertEqual(git(self.target, "status", "--porcelain", env=env), "?? .env", "하네스 첫 커밋에 빠진 파일이 있다")
+        self.assertEqual(git(self.sb.projects / "web", "log", "--format=%s", env=env), "chore: 저장소 뼈대 (하네스 생성)")
+        self.assertEqual(git(self.sb.projects / "web", "status", "--porcelain", env=env), "?? notes.txt")
+        self.assertEqual(git(self.sb.projects / "api", "status", "--porcelain", env=env), "")
+        m = json.loads((self.target / ".harness-manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(m["repos"]["web"], git(self.sb.projects / "web", "rev-list", "--max-parents=0", "HEAD", env=env))
+        heads = {d: git(self.sb.projects / d, "rev-parse", "HEAD", env=env) for d in ("orchestrator", "web", "api")}
+        r = subprocess.run([sys.executable, str(self.target / "harness" / "scripts" / "bootstrap.py"), "run",
+                            "--offline", "--non-interactive", "--skip-install"],
+                           capture_output=True, text=True, env=env, cwd=str(self.target), timeout=300)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(heads, {d: git(self.sb.projects / d, "rev-parse", "HEAD", env=env) for d in heads}, "세 번째 실행이 커밋을 더했다")
 
 
 if __name__ == "__main__":

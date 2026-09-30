@@ -537,6 +537,7 @@ class Writer:
         self.inserted: List[Tuple[str, str]] = []  # (파일, 블록) 마커가 없던 옛 파일에 새로 심은 블록
         self.stale: List[Tuple[str, str]] = []     # (파일, 블록) 마커가 없고 옛 생성기 글도 아니다 → 사람이 직접 고친다
         self.backups: List[str] = []               # 심기 전에 남긴 백업 파일
+        self.owned: List[str] = []                 # 이번 생성이 쓰거나(같아서 둔 것 포함) 사람 칸으로 둔 파일. 첫 커밋 대상
 
     def guard(self, rel: str) -> bool:
         """써도 되나. 처음 생성할 때 이미 있던 파일(사람 것)은 보호 목록에 넣고 쓰지 않는다."""
@@ -547,7 +548,12 @@ class Writer:
             return False
         return True
 
+    def own(self, rel: str) -> None:
+        if rel not in self.owned:
+            self.owned.append(rel)
+
     def _write(self, rel: str, text: str, executable: bool = False) -> None:
+        self.own(rel)
         path = self.root / rel
         if path.is_file() and path.read_text(encoding="utf-8") == text:
             return
@@ -568,6 +574,7 @@ class Writer:
         """사람이 채우는 파일: 없을 때만 만든다."""
         if (self.root / rel).exists():
             self.kept.append(rel)
+            self.own(rel)
             return
         self._write(rel, text)
 
@@ -620,6 +627,7 @@ class Writer:
             self._write(rel, text.rstrip("\n") + "\n\n## 이전 내용 (생성 전 파일)\n\n" + existing)
 
     def copy(self, src: Path, rel: str) -> None:
+        self.own(rel)
         data = Path(src).read_bytes()
         path = self.root / rel
         same_mode = os_kind() == "windows" or (path.is_file() and (path.stat().st_mode & 0o777) == (Path(src).stat().st_mode & 0o777))

@@ -47,6 +47,8 @@ class Report:
     def __init__(self):
         self.rows: List[Tuple[str, str, str]] = []
         self.todos: List[str] = []
+        self.no_identity: List[str] = []  # git 이름 · 메일이 없어 첫 커밋을 못 한 저장소
+        self._identity_at: Optional[int] = None
 
     def add(self, item: str, state: str, detail: str = "") -> None:
         self.rows.append((item, state, detail))
@@ -54,6 +56,23 @@ class Report:
     def todo(self, text: str) -> None:
         if text not in self.todos:
             self.todos.append(text)
+
+    def identity_todo(self, label: str) -> None:
+        """이름 · 메일이 없어 첫 커밋을 미룬 저장소. 원인이 하나라 할 일도 하나로 모은다(저장소 이름만 늘어난다).
+        파일 목록 · add 명령은 넣지 않는다: 신원을 넣고 run 을 다시 돌리면 하네스가 생성한 파일만 골라 커밋한다."""
+        if label not in self.no_identity:
+            self.no_identity.append(label)
+        text = "\n".join([
+            f"첫 커밋(대상 저장소: {', '.join(self.no_identity)}): git 이름 · 메일이 없어 만들지 않았다. 아래 두 줄로 신원을 넣는다",
+            '   git config --global user.name "<이름>"',
+            '   git config --global user.email "<메일>"',
+            f"   그 뒤 하네스 폴더에서 같은 명령({hl.boot_cmd('run')})을 다시 실행하면 하네스가 생성한 파일만 담아 스스로 첫 커밋을 만든다",
+        ])
+        if self._identity_at is None:
+            self.todos.append(text)
+            self._identity_at = len(self.todos) - 1
+        else:
+            self.todos[self._identity_at] = text
 
     def table(self) -> str:
         lines = ["| 항목 | 결과 | 내용 |", "| --- | --- | --- |"]
@@ -508,10 +527,8 @@ def first_commit(dest: Path, message: str, rep: Report, label: str, files: List[
     if has_commit(dest):
         return
     files = sorted({f for f in files if (dest / f).exists()})
-    listed = " ".join(f'"{f}"' for f in files)
     if not git_identity(dest):
-        rep.todo(f"{label} 첫 커밋: git config --global user.name \"<이름>\" · git config --global user.email \"<메일>\" 뒤 "
-                 f"git -C \"{dest}\" add -- {listed} && git -C \"{dest}\" commit -m \"{message}\"")
+        rep.identity_todo(label)
         return
     run(["git", "-C", str(dest), "add", "--", *files])
     code, out = run(["git", "-C", str(dest), "commit", "-q", "-m", message])
@@ -529,6 +546,21 @@ def created_record(target: Path) -> dict:
         return dict(json.loads((target / gen.MANIFEST).read_text(encoding="utf-8")).get("repos") or {})
     except (OSError, ValueError):
         return {}
+
+
+def harness_created(target: Path) -> bool:
+    """이 하네스 저장소를 bootstrap 이 새로 만들었나(manifest 기록). 첫 커밋을 미뤘다가 다시 돌릴 때 쓴다."""
+    try:
+        return bool(json.loads((target / gen.MANIFEST).read_text(encoding="utf-8")).get("created_harness"))
+    except (OSError, ValueError):
+        return False
+
+
+def pending_first_commit(dest: Path, is_harness: bool, record: dict) -> bool:
+    """우리가 만들었는데 아직 첫 커밋이 없는 저장소인가(이름 · 메일이 없어 미룬 것). 남의 저장소는 아니다."""
+    if has_commit(dest):
+        return False
+    return harness_created(dest) if is_harness else record.get(dest.name) == ""
 
 
 def first_sha(dest: Path) -> str:
@@ -610,6 +642,9 @@ def repos_step(cfg: dict, parent: Path, rep: Report, offline: bool, record: dict
         if (dest / ".git").exists():
             if r["source"] == "clone" and (not offline or is_local_url(hl.repo_url(r))):
                 run(["git", "-C", str(dest), "fetch", "--prune", "--quiet", "origin"], timeout=300)
+            if r["source"] == "new" and record.get(r["dir"]) == "" and not has_commit(dest):
+                # 이름 · 메일이 없어 첫 커밋을 미룬 우리 뼈대: 이제 신원이 있으면 뼈대 파일만 담아 커밋한다
+                first_commit(dest, SKELETON_COMMIT, rep, r["dir"], list(repo_skeleton(cfg, r)))
             if record.get(r["dir"]) == "" and has_commit(dest):
                 created[r["dir"]] = first_sha(dest)  # 이름 · 메일이 없어 커밋 전에 기록한 저장소: 이제 첫 커밋 SHA 를 채운다
             if r["source"] == "new" and not made_by_us(dest, record):
@@ -983,13 +1018,18 @@ def doctor(target: Path, kind: str, offline: bool, rep: Optional[Report] = None,
     blocks_step(cfg, target, rep)
     hook_smoke(cfg, target, rep)
     parent = hl.git_common_parent(target) or target.parent
+    record = created_record(target)
     for p, name in [(target, cfg["harness_repo"]["dir"])] + [(hl.repo_path(r, parent), r["dir"]) for r in cfg["repos"]]:
         if not (p / ".git").exists():
             rep.add(f"저장소 {name}", "없음", str(p))
             continue
         origin = run(["git", "remote", "get-url", "origin"], cwd=p)[0] == 0
         rep.add(f"저장소 {name}", "통과", ("원격 연결됨" if origin else "로컬만(원격 없음)") + f" · {p}")
-        if not has_commit(p):
+        if not has_commit(p) and pending_first_commit(p, p == target, record) and not git_identity(p):
+            rep.identity_todo(name)  # run 이 남긴 것과 같은 할 일 하나로 모인다
+        elif not has_commit(p) and pending_first_commit(p, p == target, record):
+            rep.todo(f"{name} 첫 커밋: 하네스 폴더에서 {hl.boot_cmd('run')} 을 다시 돌리면 생성한 파일만 담아 만든다")
+        elif not has_commit(p):
             rep.todo(f"{name} 첫 커밋: git -C \"{p}\" status 로 담을 파일을 확인하고 경로를 명시해 add 한 뒤 커밋한다(원래 있던 .env 같은 파일은 담지 않는다)")
     if tools:
         for tool in needed_tools(cfg):
@@ -1144,15 +1184,17 @@ def cmd_run(args) -> int:
             fh.write(text)
     parent = hl.git_common_parent(target) or target.parent
     new_repos = repos_step(cfg, parent, rep, args.offline, created_record(target))
-    w = gen.generate(cfg, target, created_repos=new_repos)
+    pending = not created and harness_created(target) and not has_commit(target)
+    w = gen.generate(cfg, target, created_repos=new_repos, created_harness=created)
     rep.add("생성", "통과", f"바뀐 파일 {len(w.changed)} · 사람이 채운 파일 유지 {len(w.kept)} · 원래 있던 파일 보호 {len(w.protect)}")
     report_blocks(cfg, w, rep)
     for rel in sorted(w.protect):
         rep.todo(f"하네스 {rel} 은 원래 있던 파일이라 덮지 않았다. 템플릿 내용(harness/skeleton 또는 새 폴더에 생성해 본 것)과 직접 합친다")
     if cfg["harness_repo"].get("source") == "local":
         rep.todo(f"하네스 연결: {target} 에 더한 파일을 git status 로 보고 경로를 명시해 커밋한다")
-    if created:
-        made = [f for f in w.changed if not f.startswith("(지움)")] + w.kept + [hl.CONFIG_NAME, gen.MANIFEST]
+    if created or pending:
+        # 생성기가 이번에 쓰거나 둔 파일만(원래 있던 .env · 보호 파일은 빠진다). 다시 돌린 run 도 같은 목록을 다시 얻는다
+        made = w.owned + [hl.CONFIG_NAME, gen.MANIFEST]
         first_commit(target, HARNESS_COMMIT, rep, cfg["harness_repo"]["dir"], made)
     remote_step(cfg, target, parent, rep, args.offline, args.create_github)
     if args.skip_install:
