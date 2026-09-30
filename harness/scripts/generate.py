@@ -666,7 +666,7 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
     slug = cfg["project"]["slug"]
     pdir = f"plugins/{slug}"
     produced: List[str] = []
-    old, repos, protected, made_here = [], {}, [], created_harness
+    old, repos, protected, made_here, engine_prev = [], {}, [], created_harness, []
     mpath = root / MANIFEST
     first = not mpath.is_file()
     if not first:
@@ -675,6 +675,7 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
             old, repos = prev.get("files", []), dict(prev.get("repos") or {})
             protected = list(prev.get("protected") or [])
             made_here = made_here or bool(prev.get("created_harness"))
+            engine_prev = list(prev.get("engine") or [])
         except ValueError:
             old = []
     # 처음 생성할 때 이미 있던 파일(기존 폴더 연결 · --force)은 사람 것이다: 덮지 않고 기록해 두고 다음에도 덮지 않는다
@@ -687,16 +688,22 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
             w.managed(rel, text, executable)
 
     # 엔진과 진입 래퍼: 템플릿 저장소 자신에서 돌면(같은 경로) 그대로 둔다.
-    # 생성된 하네스 안에서 다시 돌 때도 이 파일들은 하네스 것이다(첫 커밋을 미뤘다가 다시 돌린 run 이 담는다).
+    # 생성된 하네스 안에서 다시 돌 때는 템플릿에서 복사해 둔 목록(manifest 의 engine)만 하네스 것이다.
+    # harness/ 아래를 다시 훑으면 사람이 둔 파일(harness/local/… 등)까지 첫 커밋에 담긴다.
     in_place = root.resolve() == TEMPLATE_ROOT.resolve()
-    entries = [(src, "harness/" + src.relative_to(ENGINE_ROOT).as_posix()) for src in engine_files()]
-    entries += [(TEMPLATE_ROOT / name, name) for name in ROOT_ENTRY_FILES if (TEMPLATE_ROOT / name).is_file()]
-    for src, rel in entries:
-        if in_place:
+    engine_rels: List[str] = []
+    if in_place:
+        for rel in engine_prev:
             if rel not in w.protect and (root / rel).is_file():
                 w.own(rel)
-        elif w.guard(rel):
-            w.copy(src, rel)
+                engine_rels.append(rel)
+    else:
+        entries = [(src, "harness/" + src.relative_to(ENGINE_ROOT).as_posix()) for src in engine_files()]
+        entries += [(TEMPLATE_ROOT / name, name) for name in ROOT_ENTRY_FILES if (TEMPLATE_ROOT / name).is_file()]
+        for src, rel in entries:
+            if w.guard(rel):
+                w.copy(src, rel)
+                engine_rels.append(rel)
 
     w.mixed("CLAUDE.md", claude_md(cfg, ctx))
     managed("AGENTS.md", agents_md(cfg))
@@ -778,6 +785,7 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
               "files": sorted(produced), "repos": dict(sorted(repos.items())), "protected": sorted(w.protect)}
     if made_here:  # bootstrap 이 이 하네스 저장소를 새로 만들었다: 첫 커밋을 미뤘다면 다음 run 이 이어서 만든다
         record["created_harness"] = True
+        record["engine"] = sorted(engine_rels)  # 템플릿에서 복사한 엔진 · 진입 래퍼(첫 커밋 대상)
     w.managed(MANIFEST, jdump(record))
     return w
 

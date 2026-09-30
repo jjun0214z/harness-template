@@ -1296,6 +1296,8 @@ def cmd_add_repo(args) -> int:
         install_step(sub, target, parent, kind, rep)
         orca_step(sub, target, parent, kind, rep)
     # 새 작업자 정의는 세션이 시작할 때 읽힌다: 이미 열려 있는 세션에서는 그 이름을 부를 수 없다(실측: Agent type not found).
+    if harness_created(target) and not has_commit(target) and not git_identity(target):
+        rep.identity_todo(cfg["harness_repo"]["dir"])  # 첫 커밋을 미룬 하네스도 같은 할 일의 대상이다
     workers = " · ".join(f"`{k}-worker`" for k in added)
     if added:
         rep.todo(f"새 작업자 {workers} 를 쓰려면 세션(claude · codex)을 닫고 다시 연다. "

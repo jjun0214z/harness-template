@@ -219,6 +219,9 @@ class NoIdentityFirstCommit(unittest.TestCase):
         # 사람 파일: 커밋에 들어가면 안 된다
         (self.target / ".env").write_text("SECRET=1\n", encoding="utf-8")
         (self.target / "memo.txt").write_text("mine\n", encoding="utf-8")
+        (self.target / "harness" / "local").mkdir()
+        (self.target / "harness" / "local" / "notes.txt").write_text("mine\n", encoding="utf-8")  # 엔진 폴더 안 사람 파일
+        (self.target / "harness" / ".env").write_text("SECRET=1\n", encoding="utf-8")
         (self.sb.projects / "web" / "notes.txt").write_text("mine\n", encoding="utf-8")
         env = self.sb.env()  # 이름 · 메일이 생긴 상태
         r = subprocess.run([sys.executable, str(self.target / "harness" / "scripts" / "bootstrap.py"), "run",
@@ -227,8 +230,12 @@ class NoIdentityFirstCommit(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("첫 커밋", todo_section(r.stdout), "신원이 생겼는데 첫 커밋 안내가 남았다")
         self.assertEqual(git(self.target, "log", "--format=%s", env=env), "chore: 하네스 초기 생성")
-        self.assertEqual(git(self.target, "status", "--porcelain", env=env), "?? memo.txt", "하네스 첫 커밋에 빠진 파일이 있다")
-        self.assertNotIn(".env", git(self.target, "ls-files", env=env).split(), ".env 를 커밋했다")
+        self.assertEqual(git(self.target, "status", "--porcelain", env=env), "?? harness/local/\n?? memo.txt",
+                         "하네스 첫 커밋에 빠진 파일이 있거나 사람 파일이 들어갔다")
+        tracked = git(self.target, "ls-files", env=env).split()
+        for f in (".env", "memo.txt", "harness/local/notes.txt", "harness/.env"):
+            self.assertNotIn(f, tracked, f"사람 파일 {f} 를 커밋했다")
+        self.assertIn("harness/scripts/bootstrap.py", tracked)
         self.assertEqual(git(self.sb.projects / "web", "log", "--format=%s", env=env), "chore: 저장소 뼈대 (하네스 생성)")
         self.assertEqual(git(self.sb.projects / "web", "status", "--porcelain", env=env), "?? notes.txt")
         self.assertEqual(git(self.sb.projects / "api", "status", "--porcelain", env=env), "")
@@ -240,6 +247,20 @@ class NoIdentityFirstCommit(unittest.TestCase):
                            capture_output=True, text=True, env=env, cwd=str(self.target), timeout=300)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(heads, {d: git(self.sb.projects / d, "rev-parse", "HEAD", env=env) for d in heads}, "세 번째 실행이 커밋을 더했다")
+
+
+    def test_add_repo_lists_uncommitted_harness(self):
+        cfg = {"project": {"name": "K", "slug": "k", "owner_title": "대표님"}, "repos": [], "engines": ["claude"],
+               "platform": {"python": "python3"}}
+        p = self.sb.tmp / "k.json"
+        p.write_text(json.dumps(cfg), encoding="utf-8")
+        r = self.sb.bootstrap("run", "--config", str(p), "--target", str(self.target), "--offline", "--non-interactive",
+                              "--skip-install", **NOID)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        r = self.sb.bootstrap("add-repo", "--target", str(self.target), "--offline", "--skip-install",
+                              input_text="api\n\n\n\n", **NOID)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("첫 커밋(대상 저장소: api, orchestrator)", r.stdout)
 
 
 if __name__ == "__main__":
