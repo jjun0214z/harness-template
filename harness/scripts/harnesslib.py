@@ -459,6 +459,8 @@ BLOCK_END = "<!-- harness:end {name} -->"
 
 
 BLOCK_RE = re.compile(r"<!-- harness:begin (\S+)[^>]*-->\n.*?<!-- harness:end \1 -->\n?", re.S)
+# 비밀 파일: 새로 만드는 하네스 · 코드 저장소 .gitignore 공통(스택과 무관). 예시 파일은 커밋한다
+SECRET_IGNORE = ".env\n.env.*\n!.env.example\n"
 BACKUP_SUFFIX = "harness-bak"  # <파일>.harness-bak-<시각>. Codex 설정 백업과 같은 방식
 
 

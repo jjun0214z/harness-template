@@ -118,6 +118,19 @@ class ConnectLocalRepo(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("연결할 git 저장소가 없다", r.stdout)
 
+    def test_new_gitignore_hides_secrets_but_connected_untouched(self):
+        (self.legacy / ".gitignore").write_text("dist/\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.legacy), "add", ".gitignore"], check=True, env=self.env)
+        subprocess.run(["git", "-C", str(self.legacy), "commit", "-q", "-m", "ignore"], check=True, env=self.env)
+        r = self.run_boot(self.config(connect_files=True))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual((self.legacy / ".gitignore").read_text(encoding="utf-8"), "dist/\n", "연결 저장소 .gitignore 를 바꿨다")
+        for repo in (self.target, self.sb.projects / "web"):  # 새로 만든 하네스 · 코드 저장소
+            for name in (".env", ".env.local", ".env.production", ".env.example"):
+                (repo / name).write_text("X=1\n", encoding="utf-8")
+            self.assertEqual(git(repo, "status", "--porcelain", env=self.env), "?? .env.example",
+                             f"{repo.name}: 비밀 파일이 보이거나 예시 파일이 가려졌다")
+
 
 class ConnectHarness(unittest.TestCase):
     def test_existing_folder_as_harness_keeps_human_files(self):

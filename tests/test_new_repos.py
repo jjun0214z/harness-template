@@ -218,6 +218,7 @@ class NoIdentityFirstCommit(unittest.TestCase):
                                                capture_output=True).returncode, 0, f"{d}: 이름 · 메일 없이 커밋했다")
         # 사람 파일: 커밋에 들어가면 안 된다
         (self.target / ".env").write_text("SECRET=1\n", encoding="utf-8")
+        (self.target / "memo.txt").write_text("mine\n", encoding="utf-8")
         (self.sb.projects / "web" / "notes.txt").write_text("mine\n", encoding="utf-8")
         env = self.sb.env()  # 이름 · 메일이 생긴 상태
         r = subprocess.run([sys.executable, str(self.target / "harness" / "scripts" / "bootstrap.py"), "run",
@@ -226,7 +227,8 @@ class NoIdentityFirstCommit(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("첫 커밋", todo_section(r.stdout), "신원이 생겼는데 첫 커밋 안내가 남았다")
         self.assertEqual(git(self.target, "log", "--format=%s", env=env), "chore: 하네스 초기 생성")
-        self.assertEqual(git(self.target, "status", "--porcelain", env=env), "?? .env", "하네스 첫 커밋에 빠진 파일이 있다")
+        self.assertEqual(git(self.target, "status", "--porcelain", env=env), "?? memo.txt", "하네스 첫 커밋에 빠진 파일이 있다")
+        self.assertNotIn(".env", git(self.target, "ls-files", env=env).split(), ".env 를 커밋했다")
         self.assertEqual(git(self.sb.projects / "web", "log", "--format=%s", env=env), "chore: 저장소 뼈대 (하네스 생성)")
         self.assertEqual(git(self.sb.projects / "web", "status", "--porcelain", env=env), "?? notes.txt")
         self.assertEqual(git(self.sb.projects / "api", "status", "--porcelain", env=env), "")

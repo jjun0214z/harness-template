@@ -582,7 +582,7 @@ def repo_skeleton(cfg: dict, r: dict) -> dict:
     slug, harness = cfg["project"]["slug"], cfg["harness_repo"]["dir"]
     files = {
         "README.md": f"# {r['dir']}\n\n{r.get('description') or ''}\n",
-        ".gitignore": ".DS_Store\n__pycache__/\nnode_modules/\n.env\n.env.local\n",
+        ".gitignore": ".DS_Store\n__pycache__/\nnode_modules/\n" + hl.SECRET_IGNORE,
         "CLAUDE.md": (f"# {r['dir']}\n\n{cfg['project']['name']} 의 {r['dir']} 저장소다. 작업 규칙은 `{slug}` 플러그인 스킬을 따른다.\n"
                       f"오케스트레이터(하네스)는 `../{harness}` 다. 기준 브랜치 `{r['base_branch']}`.\n"),
         "AGENTS.md": f"# {r['dir']}\n\n같은 폴더의 `CLAUDE.md` 를 처음부터 끝까지 읽고 따른다. 설치된 `{slug}` 플러그인의 스킬을 쓴다.\n",

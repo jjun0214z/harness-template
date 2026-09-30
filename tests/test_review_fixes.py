@@ -111,8 +111,8 @@ class ForeignFolders(unittest.TestCase):
         tracked = subprocess.run(["git", "-C", str(self.target), "ls-files"], capture_output=True, text=True, env=env).stdout.split()
         self.assertIn("harness.json", tracked)
         self.assertNotIn(".env", tracked, ".env 를 커밋했다")
-        self.assertIn(".env", subprocess.run(["git", "-C", str(self.target), "status", "--porcelain"],
-                                             capture_output=True, text=True, env=env).stdout)
+        self.assertIn("!! .env", subprocess.run(["git", "-C", str(self.target), "status", "--porcelain", "--ignored"],
+                                                capture_output=True, text=True, env=env).stdout, "원래 있던 .env 가 사라졌거나 무시되지 않는다")
 
     def test_other_git_repo_refused_even_with_force(self):
         env = self.sb.env()

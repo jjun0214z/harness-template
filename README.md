@@ -125,7 +125,7 @@ gh · GitHub 로그인은 **선택**이다. 없으면 로컬 하네스만 만들
 | `README.md` | 설치한 사람용 안내 한 장(「하고 싶은 것 → 이렇게 말한다」) | 없을 때만 |
 | `상황판.md` | 지금 집중과 남은 준비 체크리스트 | 없을 때만 |
 | `docs/기록/README.md` | 근거 기록 규칙 | 없을 때만 |
-| 코드 저장소마다 | `README.md` · `.gitignore` · `CLAUDE.md` · `AGENTS.md` · 플러그인을 켜는 `.claude/settings.json` + 첫 커밋 | 이미 있으면 건드리지 않는다 |
+| 코드 저장소마다 | `README.md` · `.gitignore`(하네스와 같이 `.env` · `.env.*` 무시, `.env.example` 은 커밋) · `CLAUDE.md` · `AGENTS.md` · 플러그인을 켜는 `.claude/settings.json` + 첫 커밋 | 이미 있으면 건드리지 않는다 |
 
 규칙 스킬은 세 종류다.
 

@@ -701,7 +701,7 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
     w.mixed("CLAUDE.md", claude_md(cfg, ctx))
     managed("AGENTS.md", agents_md(cfg))
     managed(".gitignore", ".DS_Store\n__pycache__/\n*.pyc\n.claude/worktrees/\n.claude/settings.local.json\n.work/\n"
-                          f"*.{hl.BACKUP_SUFFIX}-*\n")
+                          f"*.{hl.BACKUP_SUFFIX}-*\n" + hl.SECRET_IGNORE)
     managed(".gitattributes", "* text=auto eol=lf\n*.ps1 text eol=crlf\n*.cmd text eol=crlf\n")
 
     # 플러그인
