@@ -185,6 +185,7 @@ LEGACY_RECORDS: Dict[str, List[str]] = {
     "records-link": ["- 이슈(`{{issues_repo}}`)에서 링크한다. 고쳐 쓰지 않고 쌓는다(틀린 것은 새 기록에서 정정한다).\n"]}
 # 사람이 읽을 절 이름. doctor 가 「어느 파일 어느 절이 낡았나」를 적을 때 쓴다.
 BLOCK_TITLES = {
+    hl.LINE_BLOCK_NAME: "무시 목록(생성기 몫)",
     "git-rules-repos": "저장소별 기준 브랜치 표", "deploy-table": "저장소별 반영 · 승인 표",
     "deploy-cleanup": "작업자 정리 명령", "checks-table": "커밋 전 필수 검사 표",
     "dispatch-table": "맡기는 방법 표", "work-method-records": "기록의 자리 표",
@@ -707,8 +708,10 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
 
     w.mixed("CLAUDE.md", claude_md(cfg, ctx))
     managed("AGENTS.md", agents_md(cfg))
-    managed(".gitignore", ".DS_Store\n__pycache__/\n*.pyc\n.claude/worktrees/\n.claude/settings.local.json\n.work/\n"
-                          f"*.{hl.BACKUP_SUFFIX}-*\n" + hl.SECRET_IGNORE)
+    if w.guard(".gitignore"):  # 블록만 생성기 몫. 블록 밖에 사람이 더한 줄은 update 가 덮지 않는다
+        produced.append(".gitignore")
+        w.line_block(".gitignore", ".DS_Store\n__pycache__/\n*.pyc\n.claude/worktrees/\n.claude/settings.local.json\n.work/\n"
+                                   f"*.{hl.BACKUP_SUFFIX}-*\n" + hl.SECRET_IGNORE)
     managed(".gitattributes", "* text=auto eol=lf\n*.ps1 text eol=crlf\n*.cmd text eol=crlf\n")
 
     # 플러그인

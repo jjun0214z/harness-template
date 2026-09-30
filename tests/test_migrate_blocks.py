@@ -281,5 +281,70 @@ class InsertBlocks(unittest.TestCase):
         self.assertEqual((out, done, left), (existing, [], ["t"]))
 
 
+# 관리 블록 전 생성기가 쓰던 하네스 .gitignore 글자 그대로(커밋 e4eb4eb). 생성기 출력으로 만들면 거울이 된다
+OLD_GITIGNORE = ".DS_Store\n__pycache__/\n*.pyc\n.claude/worktrees/\n.claude/settings.local.json\n.work/\n*.harness-bak-*\n"
+
+
+class GitignoreBlock(unittest.TestCase):
+    """하네스 .gitignore: 생성기는 `# >>> harness managed >>>` 블록만 갖고, 블록 밖 사람 줄은 update 가 덮지 않는다."""
+
+    def setUp(self):
+        self.sb = Sandbox()
+        self.addCleanup(self.sb.cleanup)
+        self.target = self.sb.projects / "orchestrator"
+        cfg = {"project": {"name": "Zero 프로젝트", "slug": "zero", "owner_title": "대표님"},
+               "harness_repo": {"dir": "orchestrator", "base_branch": "main"},
+               "repos": [], "engines": ["claude"], "orca": {"enabled": False}, "platform": {"python": "python3"}}
+        path = self.sb.tmp / "zero.json"
+        path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+        r = self.sb.bootstrap("run", "--config", str(path), "--target", str(self.target),
+                              "--offline", "--non-interactive", "--skip-install")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.path = self.target / ".gitignore"
+
+    def update(self):
+        r = self.sb.bootstrap("update", "--target", str(self.target), "--source", str(TEMPLATE))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def backups(self):
+        return sorted(p.name for p in self.target.glob(f".gitignore.{hl.BACKUP_SUFFIX}-*"))
+
+    def block(self, text):
+        return text.split(hl.LINE_BLOCK_BEGIN, 1)[1].split(hl.LINE_BLOCK_END, 1)[0]
+
+    def test_human_lines_kept_block_refreshed_idempotent(self):
+        text = self.path.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith(hl.LINE_BLOCK_BEGIN + "\n"), text)
+        # 사람이 블록 밖에 줄을 더하고, 블록 안은 낡게(한 줄 지움) 만든다
+        stale = text.replace(".env.*\n", "", 1) + "\n# 우리 팀\nsecret-notes/\n"
+        self.path.write_text(stale, encoding="utf-8")
+        self.update()
+        after = self.path.read_text(encoding="utf-8")
+        self.assertTrue(after.endswith("\n# 우리 팀\nsecret-notes/\n"), "블록 밖 사람 줄이 바뀌었다:\n" + after)
+        self.assertIn(".env.*\n", self.block(after), "블록이 갱신되지 않았다")
+        self.assertEqual(after.count(hl.LINE_BLOCK_BEGIN), 1)
+        snap = md5(self.path)
+        self.update()
+        self.assertEqual(md5(self.path), snap, "두 번째 update 가 .gitignore 를 바꿨다")
+        self.assertEqual(self.backups(), [], "블록이 있는 파일에 백업을 남겼다")
+
+    def test_old_gitignore_gets_block_once_and_keeps_lines(self):
+        self.path.write_text(OLD_GITIGNORE + "my-local/\n", encoding="utf-8")
+        self.update()
+        after = self.path.read_text(encoding="utf-8")
+        self.assertTrue(after.startswith(hl.LINE_BLOCK_BEGIN + "\n"), after)
+        for line in (".env", ".env.*", "!.env.example", ".work/"):
+            self.assertIn(line + "\n", self.block(after))
+        outside = after.split(hl.LINE_BLOCK_END + "\n", 1)[1]
+        self.assertEqual(outside, "\nmy-local/\n", "원래 사람 줄이 블록 밖에 남지 않았거나 옛 줄이 겹쳤다")
+        baks = self.backups()
+        self.assertEqual(len(baks), 1, baks)
+        self.assertEqual((self.target / baks[0]).read_text(encoding="utf-8"), OLD_GITIGNORE + "my-local/\n", "백업이 원본이 아니다")
+        snap = md5(self.path)
+        self.update()
+        self.assertEqual(md5(self.path), snap, "두 번째 update 가 .gitignore 를 바꿨다")
+        self.assertEqual(self.backups(), baks, "두 번째 update 가 백업을 더 남겼다")
+
+
 if __name__ == "__main__":
     unittest.main()

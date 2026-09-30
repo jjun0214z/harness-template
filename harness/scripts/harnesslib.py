@@ -462,6 +462,10 @@ BLOCK_RE = re.compile(r"<!-- harness:begin (\S+)[^>]*-->\n.*?<!-- harness:end \1
 # 비밀 파일: 새로 만드는 하네스 · 코드 저장소 .gitignore 공통(스택과 무관). 예시 파일은 커밋한다
 SECRET_IGNORE = ".env\n.env.*\n!.env.example\n"
 BACKUP_SUFFIX = "harness-bak"  # <파일>.harness-bak-<시각>. Codex 설정 백업과 같은 방식
+# 줄 단위 파일(.gitignore)의 관리 블록. 생성기는 이 두 줄 사이만 가진다. 블록 밖 줄은 사람 것이다
+LINE_BLOCK_BEGIN = "# >>> harness managed >>>"
+LINE_BLOCK_END = "# <<< harness managed <<<"
+LINE_BLOCK_NAME = "gitignore"
 
 
 def block(name: str, body: str) -> str:
@@ -612,6 +616,27 @@ class Writer:
                 self.backup(rel)
                 existing = merged
         self._write(rel, replace_blocks(existing, text))
+
+    def line_block(self, rel: str, body: str) -> None:
+        """줄 단위 파일(.gitignore)의 관리 블록: 블록 안만 설정대로 맞추고 블록 밖 사람 줄은 건드리지 않는다.
+        블록이 없는 옛 파일은 한 번 블록을 앞에 심는다(백업 후). 원래 줄 중 블록과 같은 줄만 빼고 블록 아래에 그대로 둔다."""
+        fresh = LINE_BLOCK_BEGIN + "\n" + body.rstrip("\n") + "\n" + LINE_BLOCK_END + "\n"
+        path = self.root / rel
+        if not path.is_file():
+            self._write(rel, fresh)
+            return
+        existing = path.read_text(encoding="utf-8")
+        start, end = existing.find(LINE_BLOCK_BEGIN), existing.find(LINE_BLOCK_END)
+        if start != -1 and end > start:
+            post = existing[end + len(LINE_BLOCK_END):]
+            post = post[1:] if post.startswith("\n") else post
+            self._write(rel, existing[:start] + fresh + post)
+            return
+        ours = set(fresh.splitlines())
+        rest = "\n".join(ln for ln in existing.splitlines() if ln not in ours).strip("\n")
+        self.backup(rel)
+        self.inserted.append((rel, LINE_BLOCK_NAME))
+        self._write(rel, fresh + ("\n" + rest + "\n" if rest else ""))
 
     def mixed(self, rel: str, text: str) -> None:
         """관리 블록 + 사람 칸이 섞인 파일: 있으면 블록만 바꾼다."""
