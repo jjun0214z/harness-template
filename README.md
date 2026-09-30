@@ -14,28 +14,20 @@
 
 프로젝트를 만들 폴더에서 아래를 실행한다.
 
-<table>
-<tr><th>macOS · Linux (터미널)</th><th>Windows (PowerShell)</th></tr>
-<tr>
-<td>
+**🍎 macOS · 🐧 Linux** (터미널)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.sh | bash
 ```
 
-</td>
-<td>
+**🪟 Windows** (PowerShell)
 
 ```powershell
 $u = "https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1"
 irm $u | iex
 ```
 
-</td>
-</tr>
-</table>
-
-> Windows 의 Git Bash 에서는 왼쪽 `curl … | bash` 한 줄을 그대로 써도 된다. 알아서 PowerShell 설치로 넘긴다.
+> Windows 의 Git Bash 에서는 위 macOS · Linux 의 `curl … | bash` 한 줄을 그대로 써도 된다. 알아서 PowerShell 설치로 넘긴다.
 
 에이전트에게 맡겨도 된다. Claude 또는 Codex 에게 **「jjun0214z/harness-template 로 셋업해」**.
 
