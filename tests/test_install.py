@@ -110,7 +110,7 @@ class Install(unittest.TestCase):
     def template_repo(self):
         """템플릿을 복사해 커밋한 로컬 저장소. 공개 저장소 clone 을 네트워크 없이 흉내 낸다."""
         src = self.sb.tmp / "upstream"
-        shutil.copytree(TEMPLATE, src, ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(TEMPLATE, src, ignore=shutil.ignore_patterns("__pycache__", ".git"))
         env = self.sb.env()
         subprocess.run(["git", "init", "-q", "-b", "main", str(src)], check=True, env=env)
         subprocess.run(["git", "-C", str(src), "add", "-A"], check=True, env=env)

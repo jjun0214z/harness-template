@@ -136,7 +136,7 @@ class InstallKeepsCwd(unittest.TestCase):
 
     def upstream(self):
         src = self.sb.tmp / "upstream"
-        shutil.copytree(TEMPLATE, src, ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(TEMPLATE, src, ignore=shutil.ignore_patterns("__pycache__", ".git"))
         env = self.sb.env()
         subprocess.run(["git", "init", "-q", "-b", "main", str(src)], check=True, env=env)
         subprocess.run(["git", "-C", str(src), "add", "-A"], check=True, env=env)
