@@ -89,7 +89,7 @@ class ProjectRoot(unittest.TestCase):
 
     def answers(self, slug, root_answer):
         return "\n".join([
-            "Loc", slug, root_answer, "", "대표님",            # 이름 · 슬러그 · 「여기에 만듭니다」 · 조직 · 호칭
+            "Loc", slug, root_answer, "", "주임님",            # 이름 · 슬러그 · 「여기에 만듭니다」 · 조직 · 호칭
             "1", "orchestrator", "main",                         # 하네스 새로 만들기 · 폴더 · 브랜치
             "web", "1", "", "", "main", "", "3", "", "", "",     # 저장소 web 새로 만들기
             "",                                                  # 저장소 끝

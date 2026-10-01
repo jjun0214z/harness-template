@@ -12,7 +12,7 @@ from helpers import TEMPLATE, Sandbox, tree_snapshot
 
 def new_config(sb: Sandbox, org: str = "", engines=("claude",), name="n"):
     cfg = {
-        "project": {"name": "Zero 프로젝트", "slug": "zero", "github_org": org, "owner_title": "대표님"},
+        "project": {"name": "Zero 프로젝트", "slug": "zero", "github_org": org, "owner_title": "주임님"},
         "harness_repo": {"dir": "orchestrator", "base_branch": "main"},
         "repos": [
             {"key": "web", "base_branch": "develop", "stack": "node", "deploy": {"main": "상용"}, "ask_on_push": ["main"]},
@@ -250,7 +250,7 @@ class NoIdentityFirstCommit(unittest.TestCase):
 
 
     def test_add_repo_lists_uncommitted_harness(self):
-        cfg = {"project": {"name": "K", "slug": "k", "owner_title": "대표님"}, "repos": [], "engines": ["claude"],
+        cfg = {"project": {"name": "K", "slug": "k", "owner_title": "주임님"}, "repos": [], "engines": ["claude"],
                "platform": {"python": "python3"}}
         p = self.sb.tmp / "k.json"
         p.write_text(json.dumps(cfg), encoding="utf-8")

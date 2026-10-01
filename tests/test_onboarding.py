@@ -36,7 +36,7 @@ class Onboarding(unittest.TestCase):
         self.target = self.sb.projects / "orchestrator"
 
     def write_config(self, name="zero.json", **over):
-        cfg = {"project": {"name": "Zero 프로젝트", "slug": "zero", "owner_title": "대표님"},
+        cfg = {"project": {"name": "Zero 프로젝트", "slug": "zero", "owner_title": "주임님"},
                "harness_repo": {"dir": "orchestrator", "remote": "", "base_branch": "main"},
                "repos": [], "engines": ["claude"], "orca": {"enabled": False},
                "platform": {"python": "python3"}}
@@ -215,7 +215,7 @@ print(json.dumps({{"result": out}}))
         self.orca = self.sb.bin / "fake-orca"
         self.orca.write_text(self.FAKE_ORCA.format(python=sys.executable), encoding="utf-8")
         self.orca.chmod(0o755)
-        cfg = {"project": {"name": "Orca 프로젝트", "slug": "oc", "owner_title": "대표님"},
+        cfg = {"project": {"name": "Orca 프로젝트", "slug": "oc", "owner_title": "주임님"},
                "harness_repo": {"dir": "orchestrator", "remote": "", "base_branch": "main"},
                "repos": [{"key": "app", "base_branch": "main"}], "engines": ["claude"],
                "orca": {"enabled": True, "workspaces_dir": str(self.sb.tmp / "ws")},

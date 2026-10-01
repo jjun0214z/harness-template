@@ -72,7 +72,7 @@ class Migration(unittest.TestCase):
         self.sb = Sandbox()
         self.addCleanup(self.sb.cleanup)
         self.target = self.sb.projects / "orchestrator"
-        cfg = {"project": {"name": "Zero 프로젝트", "slug": "zero", "owner_title": "대표님"},
+        cfg = {"project": {"name": "Zero 프로젝트", "slug": "zero", "owner_title": "주임님"},
                "harness_repo": {"dir": "orchestrator", "remote": "", "base_branch": "main"},
                "repos": [], "engines": ["claude"], "orca": {"enabled": False},
                "platform": {"python": "python3"}}
@@ -292,7 +292,7 @@ class GitignoreBlock(unittest.TestCase):
         self.sb = Sandbox()
         self.addCleanup(self.sb.cleanup)
         self.target = self.sb.projects / "orchestrator"
-        cfg = {"project": {"name": "Zero 프로젝트", "slug": "zero", "owner_title": "대표님"},
+        cfg = {"project": {"name": "Zero 프로젝트", "slug": "zero", "owner_title": "주임님"},
                "harness_repo": {"dir": "orchestrator", "base_branch": "main"},
                "repos": [], "engines": ["claude"], "orca": {"enabled": False}, "platform": {"python": "python3"}}
         path = self.sb.tmp / "zero.json"

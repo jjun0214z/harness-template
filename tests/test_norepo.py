@@ -18,7 +18,7 @@ class NoRepos(unittest.TestCase):
         self.sb = Sandbox()
         self.addCleanup(self.sb.cleanup)
         self.target = self.sb.projects / "orchestrator"
-        cfg = {"project": {"name": "Empty 프로젝트", "slug": "empty", "owner_title": "대표님"},
+        cfg = {"project": {"name": "Empty 프로젝트", "slug": "empty", "owner_title": "주임님"},
                "repos": [], "engines": ["claude", "codex"], "orca": {"enabled": False}, "platform": {"python": "python3"}}
         self.cfg = self.sb.tmp / "empty.json"
         self.cfg.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
@@ -99,7 +99,7 @@ class NoRepos(unittest.TestCase):
         self.assertIn(str((self.sb.projects / "api").resolve()), text)
 
     def test_interview_blank_first_key(self):
-        answers = "\n".join(["Later", "later", "", "대표님", "1", "orchestrator", "main",
+        answers = "\n".join(["Later", "later", "", "주임님", "1", "orchestrator", "main",
                              "",                                   # 첫 저장소 키 빈칸 = 나중에
                              "y", "y", "y", "y", "1", "n"]) + "\n"
         r = self.sb.bootstrap("run", "--detail", "--target", str(self.target), "--offline", "--skip-install", input_text=answers)

@@ -83,6 +83,16 @@ class GitBash(unittest.TestCase):
                   'if [[ "$p" == /?/* ]]; then d="${p:1:1}"; p="$(printf %s "$d" | tr a-z A-Z):${p:2}"; fi\n'
                   'printf "%s\\n" "${p//\\//\\\\}"\n')
 
+    def test_title_option_reaches_powershell_as_is(self):
+        """`curl … | bash -s -- --title 팀장님` 을 Git Bash 에서: 한글 호칭이 한 인자로 install.ps1 에 간다(run 은 bootstrap.py 가 붙인다)."""
+        self.fake("powershell.exe", RECORDER)
+        self.fake_cygpath()
+        r = subprocess.run(["bash", str(TEMPLATE / "install.sh"), "--title", "팀장님"],
+                           capture_output=True, text=True, env=self.env(), stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        _, _, env = self.recorded()
+        self.assertEqual(json.loads(env["HARNESS_ARGS_JSON"]), ["--title", "팀장님"])
+
     def test_space_root_and_msys_paths_stay_one_arg(self):
         """공백 든 --root 가 쪼개지지 않고, /c/... 경로는 Windows 경로로, 따옴표 · 역슬래시도 JSON 으로 안전하게 간다."""
         self.fake("powershell.exe", RECORDER)

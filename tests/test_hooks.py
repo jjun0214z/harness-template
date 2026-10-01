@@ -53,7 +53,7 @@ class GeneratedHooks(unittest.TestCase):
         out = self.push("git push origin develop:main", self.web)
         self.assertEqual(self.decision(out), "ask")
         self.assertIn("상용 배포", out["hookSpecificOutput"]["permissionDecisionReason"])
-        self.assertIn("대표님", out["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertIn("주임님", out["hookSpecificOutput"]["permissionDecisionReason"])
 
     def test_normal_push_passes(self):
         self.assertIsNone(self.push("git push origin develop", self.web))

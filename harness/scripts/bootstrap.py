@@ -214,15 +214,16 @@ def detect_engines(kind: str) -> str:
 
 
 def simple_interview(kind: str, reader: Callable[[str], str] = input, root_fixed: Optional[Path] = None,
-                     use_orca: bool = True) -> dict:
-    """기본 셋업: 질문 2개(프로젝트 이름 · 엔진) + 요약 확인. 나머지는 기본값(자세히는 --detail)."""
+                     use_orca: bool = True, title: Optional[str] = None) -> dict:
+    """기본 셋업: 질문 3개(프로젝트 이름 · 엔진 · 호칭) + 요약 확인. --title 을 주면 호칭은 묻지 않는다. 나머지는 기본값(자세히는 --detail)."""
     cfg = hl.default_config()
     p = cfg["project"]
-    say("\n하네스 셋업 (질문 2개. 전부 고르려면 --detail)")
+    say(f"\n하네스 셋업 (질문 {2 if title else 3}개. 전부 고르려면 --detail)")
     p["name"] = ask("1) 프로젝트 이름", caller_base().name, reader)
     p["slug"] = default_slug(p["name"])
     choice = ask("2) 엔진 (1) Claude (2) Codex (3) 둘 다", detect_engines(kind), reader)
     cfg["engines"] = {"1": ["claude"], "2": ["codex"], "3": ["claude", "codex"]}.get(choice, ["claude"])
+    p["owner_title"] = title or ask("3) 호칭", hl.DEFAULT_OWNER_TITLE, reader)
     # Orca 는 묻지 않는다: 있으면 쓰고, 없으면 도구 표에 「설치(선택)」로 나온다(동의 한 번). --no-orca 로 뺀다
     installed = hl.find_tool("orca", kind, hl.tool_extra_paths("orca", kind)) is not None
     cfg["orca"]["enabled"] = use_orca
@@ -235,7 +236,8 @@ def simple_interview(kind: str, reader: Callable[[str], str] = input, root_fixed
         say("\n" + problem)
         ans = ask("  다른 경로 입력 · Enter 또는 n = 그만", "", reader)
     else:
-        ans = ask(f"\n여기에 만듭니다: {root} · 엔진 {engines} · 저장소는 나중에(add-repo) · {orca}\n"
+        ans = ask(f"\n여기에 만듭니다: {root} · 엔진 {engines} · 저장소는 나중에(add-repo) · {orca}"
+                  f" · 호칭 {p['owner_title']}\n"
                   "  Enter = 진행 · 다른 경로를 치면 그 폴더에 · n = 그만", "", reader)
     while True:
         if ans.lower() in ("n", "no", "아니오") or (problem and not ans):
@@ -252,8 +254,8 @@ def simple_interview(kind: str, reader: Callable[[str], str] = input, root_fixed
     return hl.normalize(cfg)
 
 
-def interview(kind: str, reader: Callable[[str], str] = input, default_root=None) -> dict:
-    """네 묶음 질문 → 설정 dict."""
+def interview(kind: str, reader: Callable[[str], str] = input, default_root=None, title: Optional[str] = None) -> dict:
+    """네 묶음 질문 → 설정 dict. title 은 호칭 질문의 기본값(--title)."""
     cfg = hl.default_config()
     say("\n[1/4] 프로젝트")
     p = cfg["project"]
@@ -263,7 +265,7 @@ def interview(kind: str, reader: Callable[[str], str] = input, default_root=None
         here = default_root(None, {"project": {"slug": p["slug"]}, "harness_repo": {"dir": "orchestrator"}})
         cfg["_root"] = ask(f"여기에 만듭니다: {here}  (Enter = 그대로, 다른 경로 입력)", str(here), reader)
     p["github_org"] = ask("GitHub 조직 또는 사용자(없으면 빈칸: 로컬만 만든다)", "", reader)
-    p["owner_title"] = ask("결정권자를 부르는 호칭", "대표님", reader)
+    p["owner_title"] = ask("결정권자를 부르는 호칭", title or hl.DEFAULT_OWNER_TITLE, reader)
     h = cfg["harness_repo"]
     how = ask("하네스 저장소: (1) 새로 만들기 (2) 이 컴퓨터에 있는 폴더 연결", "1", reader)
     if how == "2":
@@ -1125,11 +1127,12 @@ def load_or_ask(args, kind: str) -> dict:
                 return hl.load_config(cand / hl.CONFIG_NAME)
     if args.non_interactive:
         raise hl.ConfigError("--non-interactive 에는 --config 가 필요하다")
+    title = (getattr(args, "title", None) or "").strip() or None
     if getattr(args, "detail", False):
-        cfg = interview(kind, default_root=None if (args.root or args.target) else project_root)
+        cfg = interview(kind, default_root=None if (args.root or args.target) else project_root, title=title)
     else:
         fixed = Path(args.target).expanduser().resolve().parent if args.target else (Path(args.root).expanduser().resolve() if args.root else None)
-        cfg = simple_interview(kind, root_fixed=fixed, use_orca=not getattr(args, "no_orca", False))
+        cfg = simple_interview(kind, root_fixed=fixed, use_orca=not getattr(args, "no_orca", False), title=title)
     chosen = cfg.pop("_root", None)
     if chosen and not args.target:
         args.root = chosen
@@ -1146,6 +1149,10 @@ def cmd_run(args) -> int:
     except hl.ConfigError as exc:
         hl.eprint(exc)
         return 2
+    title = (args.title or "").strip()
+    if title and title != cfg["project"]["owner_title"]:
+        say(f"--title {title} 은 새로 셋업할 때만 쓴다. 지금 설정의 호칭은 {cfg['project']['owner_title']} 그대로다"
+            "(바꾸려면 harness.json 의 project.owner_title 을 고치고 generate)")
     target = resolve_target(args, cfg)
     if not args.target and cfg["harness_repo"].get("source") != "local" and not (target / hl.CONFIG_NAME).is_file():
         problem = root_problem(project_root(args, cfg), cfg, args.force)
@@ -1381,6 +1388,8 @@ def main(argv=None) -> int:
     p.add_argument("--force", action="store_true", help="비어 있지 않은 폴더(git 저장소가 아닌 것)에 하네스를 만든다")
     p.add_argument("--detail", action="store_true", help="기본값을 쓰지 않고 전부 묻는다(GitHub · 호칭 · 하네스 연결 · 저장소 · 스킬 · Orca)")
     p.add_argument("--no-orca", action="store_true", help="Orca 를 쓰지 않는다(기본은 있으면 쓰고 없으면 설치를 제안)")
+    p.add_argument("--title", "--owner-title", dest="title",
+                   help=f"결정권자를 부르는 호칭(기본: {hl.DEFAULT_OWNER_TITLE}). 새로 셋업할 때만 쓴다. 이미 만든 하네스는 harness.json 을 고친다")
     for name in ("check", "tools", "generate", "doctor"):
         sub.add_parser(name, parents=[common])
     a = sub.add_parser("add-repo", parents=[common], help="저장소를 나중에 하나 더한다(새로 만들기 · 원격 받기 · 폴더 연결)")
@@ -1390,11 +1399,13 @@ def main(argv=None) -> int:
     a.add_argument("--detail", action="store_true", help="폴더 · 원격 · 브랜치 · 설명 · 배포 의미 · push 브랜치 · 검사 명령까지 묻는다")
     u = sub.add_parser("update", parents=[common], help="템플릿 최신본의 엔진을 가져와 다시 생성")
     u.add_argument("--source", help="템플릿 주소 또는 로컬 폴더(기본: harness.json template.url)")
-    args = ap.parse_args(argv)
     handlers = {"run": cmd_run, "check": cmd_check, "tools": cmd_tools, "generate": cmd_generate,
                 "doctor": cmd_doctor, "update": cmd_update, "add-repo": cmd_add_repo}
-    if not args.cmd:
-        args = ap.parse_args(["run"] + list(argv if argv is not None else sys.argv[1:]))
+    argv = list(argv if argv is not None else sys.argv[1:])
+    # 하위 명령 없이 옵션만 오면 run 의 옵션이다: 한 줄 설치의 `bash -s -- --title 팀장님` · `--detail`
+    if not argv or (argv[0] not in handlers and argv[0] not in ("-h", "--help")):
+        argv = ["run"] + argv
+    args = ap.parse_args(argv)
     return handlers[args.cmd](args)
 
 

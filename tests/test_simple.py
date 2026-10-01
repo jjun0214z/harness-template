@@ -1,4 +1,4 @@
-"""기본 셋업 질문 2개(fix-simple) · 윈도우 실사용 결함(fix-win-run) · Orca 자동 설치(fix-orca-auto)."""
+"""기본 셋업 질문 3개(fix-simple · 호칭) · 윈도우 실사용 결함(fix-win-run) · Orca 자동 설치(fix-orca-auto)."""
 from __future__ import annotations
 
 import json
@@ -30,25 +30,81 @@ class TwoQuestions(unittest.TestCase):
     def test_kids_enter_enter_in_folder_named_kids(self):
         kids = self.sb.tmp / "kids"
         kids.mkdir()
-        r = self.simple(kids, "kids\n\n\n")
+        r = self.simple(kids, "kids\n\n\n\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn(f"여기에 만듭니다: {kids.resolve()} · 엔진 Claude · 저장소는 나중에(add-repo)", r.stdout)
         self.assertTrue((kids / "orchestrator" / "harness.json").is_file(), "kids\\kids 로 겹치면 안 된다")
         self.assertFalse((kids / "kids").exists())
         cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
         self.assertEqual((cfg["project"]["slug"], cfg["repos"], cfg["engines"], cfg["project"]["owner_title"]),
-                         ("kids", [], ["claude"], "대표님"))
+                         ("kids", [], ["claude"], "주임님"))
         self.assertEqual(cfg["skills"]["fill"], list(hl.FILL_SKILLS))
         # 같은 폴더에서 다시: 질문 없이 기존 하네스를 쓴다
         r = self.simple(kids, "")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("이미 만든 하네스를 쓴다", r.stdout)
 
+    def test_title_flag_skips_third_question(self):
+        """--title 을 주면 3번(호칭)을 묻지 않는다: 답 2개 + 확인 Enter 로 끝나고 그 호칭이 들어간다."""
+        kids = self.sb.tmp / "kids"
+        kids.mkdir()
+        r = self.simple(kids, "kids\n\n\n", "--title", "팀장님")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("3) 호칭", r.stdout)
+        self.assertIn("질문 2개", r.stdout)
+        self.assertIn("호칭 팀장님", r.stdout)
+        cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["project"]["owner_title"], "팀장님")
+        # 이미 만든 하네스를 다시 돌릴 때 --title 은 설정을 바꾸지 않고 알린다
+        r = self.simple(kids, "", "--title", "실장님")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("새로 셋업할 때만", r.stdout)
+        cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["project"]["owner_title"], "팀장님")
+
+    def test_third_question_enter_is_default_title(self):
+        kids = self.sb.tmp / "kids"
+        kids.mkdir()
+        r = self.simple(kids, "kids\n\n\n\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("질문 3개", r.stdout)
+        self.assertIn("3) 호칭 [주임님]:", r.stdout)
+        self.assertIn("호칭 주임님", r.stdout)
+        cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["project"]["owner_title"], "주임님")
+
+    def test_third_question_answer_sets_title(self):
+        kids = self.sb.tmp / "kids"
+        kids.mkdir()
+        r = self.simple(kids, "kids\n\n팀장님\n\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["project"]["owner_title"], "팀장님")
+
+    def test_options_without_subcommand_go_to_run(self):
+        """한 줄 설치의 `bash -s -- --title 팀장님` 은 run 없이 옵션만 bootstrap.py 에 온다."""
+        kids = self.sb.tmp / "kids"
+        kids.mkdir()
+        r = self.sb.bootstrap("--title", "팀장님", "--offline", "--skip-install", "--no-orca",
+                              input_text="kids\n\n\n", cwd=kids)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["project"]["owner_title"], "팀장님")
+
+    def test_detail_title_question_defaults_to_title_flag(self):
+        answers = "\n".join(["Ops", "ops", "", "", "", "1", "orchestrator", "main", "",
+                             "y", "y", "y", "y", "1", "n"]) + "\n"
+        r = self.sb.bootstrap("run", "--detail", "--offline", "--skip-install", "--title", "실장님",
+                              input_text=answers, cwd=self.sb.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        cfg = json.loads((self.sb.tmp / "ops" / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["project"]["owner_title"], "실장님")
+
     def test_nonempty_folder_gets_slug_subfolder(self):
         dev = self.sb.tmp / "dev"
         dev.mkdir()
         (dev / "다른것.txt").write_text("x", encoding="utf-8")
-        r = self.simple(dev, "kids\n\n\n")
+        r = self.simple(dev, "kids\n\n\n\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue((dev / "kids" / "orchestrator" / "harness.json").is_file())
 
@@ -58,7 +114,7 @@ class TwoQuestions(unittest.TestCase):
         kids.mkdir()
         git(kids, "init", "-q")
         (kids / "main.py").write_text("print(1)\n", encoding="utf-8")
-        r = self.simple(kids, "kids\n\n\n")
+        r = self.simple(kids, "kids\n\n\n\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn(f"여기에 만듭니다: {(kids / 'kids').resolve()}", r.stdout)
         self.assertTrue((kids / "kids" / "orchestrator" / "harness.json").is_file())
@@ -76,7 +132,7 @@ class TwoQuestions(unittest.TestCase):
         (kids / "app.js").write_text("1\n", encoding="utf-8")
         empty.mkdir()
         for cwd, want in ((dev, dev / "kids"), (kids, kids / "kids"), (empty, empty)):
-            r = self.simple(cwd, "kids\n\n\n")
+            r = self.simple(cwd, "kids\n\n\n\n")
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertTrue((want / "orchestrator" / "harness.json").is_file(), f"{cwd} -> {want}")
         self.assertEqual(sorted(p.name for p in dev.iterdir()), ["kids", "other-project"])
@@ -87,7 +143,7 @@ class TwoQuestions(unittest.TestCase):
         dev = self.sb.tmp / "dev"
         (dev / "kids").mkdir(parents=True)
         (dev / "kids" / "남의것.txt").write_text("x", encoding="utf-8")
-        r = self.simple(dev, "kids\n\n\n")
+        r = self.simple(dev, "kids\n\n\n\n")
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("빈 폴더에서 다시 실행하거나", r.stdout)
         self.assertNotIn("--force", r.stdout + r.stderr)
@@ -97,7 +153,7 @@ class TwoQuestions(unittest.TestCase):
         busy.mkdir()
         (busy / "x.txt").write_text("x", encoding="utf-8")
         other = self.sb.tmp / "새 자리"
-        r = self.simple(dev, f"kids\n\n{busy}\n{other}\n")
+        r = self.simple(dev, f"kids\n\n\n{busy}\n{other}\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue((other / "orchestrator" / "harness.json").is_file())
         self.assertFalse((busy / "orchestrator").exists())
@@ -106,7 +162,7 @@ class TwoQuestions(unittest.TestCase):
     def test_empty_folder_other_name_is_used_itself(self):
         box = self.sb.tmp / "빈폴더"
         box.mkdir()
-        r = self.simple(box, "Kids App\n\n\n")
+        r = self.simple(box, "Kids App\n\n\n\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue((box / "orchestrator" / "harness.json").is_file())
         self.assertEqual(json.loads((box / "orchestrator" / "harness.json").read_text(encoding="utf-8"))["project"]["slug"], "kids-app")
@@ -114,7 +170,7 @@ class TwoQuestions(unittest.TestCase):
     def test_korean_name_slug_from_folder(self):
         box = self.sb.tmp / "myapp"
         box.mkdir()
-        r = self.simple(box, "우리 앱\n\n\n")
+        r = self.simple(box, "우리 앱\n\n\n\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         cfg = json.loads((box / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
         self.assertEqual((cfg["project"]["name"], cfg["project"]["slug"]), ("우리 앱", "myapp"))
@@ -123,7 +179,7 @@ class TwoQuestions(unittest.TestCase):
         self.sb.fake_tools(("codex",))
         box = self.sb.tmp / "c"
         box.mkdir()
-        r = self.simple(box, "c\n\n\n")
+        r = self.simple(box, "c\n\n\n\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("엔진 (1) Claude (2) Codex (3) 둘 다 [2]", r.stdout)
         self.assertEqual(json.loads((box / "orchestrator" / "harness.json").read_text(encoding="utf-8"))["engines"], ["codex"])
@@ -131,7 +187,7 @@ class TwoQuestions(unittest.TestCase):
     def test_summary_n_stops(self):
         box = self.sb.tmp / "s"
         box.mkdir()
-        r = self.simple(box, "s\n\nn\n")
+        r = self.simple(box, "s\n\n\nn\n")
         self.assertEqual(r.returncode, 2)
         self.assertIn("--detail", r.stderr)
         self.assertFalse((box / "orchestrator").exists())
@@ -149,7 +205,7 @@ class DetailChecks(unittest.TestCase):
         h = self.sb.tmp / "ops"
         h.mkdir()
         (h / "메모.txt").write_text("원래 파일", encoding="utf-8")
-        answers = "\n".join(["Ops", "ops", "", "", "대표님",
+        answers = "\n".join(["Ops", "ops", "", "", "주임님",
                              "2", str(self.sb.tmp / "없는곳"), str(h), "y", "",   # 없는 경로 → 다시 → git 아님 → git init 예 · 브랜치
                              "",                                               # 저장소 나중에
                              "y", "y", "y", "y", "1", "n"]) + "\n"
@@ -163,7 +219,7 @@ class DetailChecks(unittest.TestCase):
 
     def test_repo_key_and_local_path_are_rechecked(self):
         target = self.sb.projects / "orchestrator"
-        cfg = {"project": {"name": "K", "slug": "k", "owner_title": "대표님"}, "repos": [], "engines": ["claude"],
+        cfg = {"project": {"name": "K", "slug": "k", "owner_title": "주임님"}, "repos": [], "engines": ["claude"],
                "platform": {"python": "python3"}}
         p = self.sb.tmp / "k.json"
         p.write_text(json.dumps(cfg), encoding="utf-8")
@@ -183,7 +239,7 @@ class DetailChecks(unittest.TestCase):
         self.assertEqual((cfg["repos"][0]["key"], cfg["repos"][0]["source"], cfg["repos"][0]["dir"]), ("web", "local", "real"))
 
     def test_validate_rejects_digit_key(self):
-        cfg = hl.normalize({"project": {"name": "x", "slug": "x", "owner_title": "대표님"}, "repos": [{"key": "1"}],
+        cfg = hl.normalize({"project": {"name": "x", "slug": "x", "owner_title": "주임님"}, "repos": [{"key": "1"}],
                             "engines": ["claude"]})
         self.assertTrue(any("repos[0].key" in e for e in hl.validate(cfg)))
 
@@ -236,7 +292,7 @@ class WindowsJudgments(unittest.TestCase):
     def test_generated_docs_use_configured_python(self):
         sb = Sandbox()
         self.addCleanup(sb.cleanup)
-        cfg = {"project": {"name": "W", "slug": "w", "owner_title": "대표님"}, "repos": [], "engines": ["claude"],
+        cfg = {"project": {"name": "W", "slug": "w", "owner_title": "주임님"}, "repos": [], "engines": ["claude"],
                "platform": {"python": "py -3"}}
         p = sb.tmp / "w.json"
         p.write_text(json.dumps(cfg), encoding="utf-8")
@@ -269,7 +325,7 @@ class OrcaAutoInstall(unittest.TestCase):
             (bin_ / name).chmod(0o755)
         box = sb.tmp / "o"
         box.mkdir()
-        r = sb.bootstrap("run", "--offline", input_text="o\n\n\ny\n", cwd=box, HARNESS_ORCA_WAIT="10")
+        r = sb.bootstrap("run", "--offline", input_text="o\n\n\n\ny\n", cwd=box, HARNESS_ORCA_WAIT="10")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("| orca | 없음 | 설치(선택) | brew install --cask stablyai/orca/orca |", r.stdout)
         lines = log.read_text(encoding="utf-8").splitlines()
@@ -290,7 +346,7 @@ class OrcaAutoInstall(unittest.TestCase):
         self.addCleanup(sb.cleanup)
         box = sb.tmp / "d"
         box.mkdir()
-        r = sb.bootstrap("run", "--offline", "--skip-install", input_text="d\n\n\nn\n", cwd=box)
+        r = sb.bootstrap("run", "--offline", "--skip-install", input_text="d\n\n\n\nn\n", cwd=box)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         cfg = json.loads((box / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
         self.assertFalse(cfg["orca"]["enabled"], "Orca 를 설치하지 않았는데 켜 두었다")

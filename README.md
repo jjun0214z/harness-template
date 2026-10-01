@@ -5,7 +5,7 @@
 오케스트레이터 · 저장소별 작업자 · 규칙 스킬 틀 · 안전 훅 · 작업 추적 · 기록이 한 번에 생긴다.
 
 - ⚡ **한 줄 설치**: 내려받기 · 압축 풀기 · GitHub 계정 · `gh` 가 필요 없다
-- 🧭 **질문 2개**: 프로젝트 이름과 엔진만 묻고, 나머지는 기본값으로 간다
+- 🧭 **질문 3개**: 프로젝트 이름 · 엔진 · 호칭만 묻고, 나머지는 기본값으로 간다
 - 🤖 **Claude / Codex**: 하나 또는 둘 다. Orca 는 있으면 쓴다
 - 🪟 **macOS · Linux · Windows**: 같은 코드(python3 표준 라이브러리)가 돈다
 - 🔒 **덮지 않음**: 기존 설정 · 저장소 · 사람이 쓴 본문은 그대로 두고, 두 번 돌려도 안전하다
@@ -76,12 +76,13 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 
 ## 🧭 설치하면 일어나는 일
 
-**질문 2개와 확인 한 번이면 끝난다.**
+**질문 3개와 확인 한 번이면 끝난다.**
 
 1. **프로젝트 이름** (Enter = 지금 폴더 이름)
 2. **엔진** Claude · Codex · 둘 다 (Enter = 설치돼 있는 것)
-3. 요약 「여기에 만듭니다: <경로> · 엔진 · 저장소는 나중에(add-repo) · Orca」 → Enter (다른 경로를 쳐도 된다)
-4. 도구 표 → 설치 동의 한 번 (Orca 도 없으면 여기서 같이 설치, `--no-orca` 로 뺀다)
+3. **호칭** 결정권자를 부르는 말 (Enter = 주임님, `--title <호칭>` 을 주면 묻지 않는다)
+4. 요약 「여기에 만듭니다: <경로> · 엔진 · 저장소는 나중에(add-repo) · Orca · 호칭」 → Enter (다른 경로를 쳐도 된다)
+5. 도구 표 → 설치 동의 한 번 (Orca 도 없으면 여기서 같이 설치, `--no-orca` 로 뺀다)
 
 막 산 컴퓨터에서도 돈다. 먼저 무엇이 있고 없는지 표로 보여 주고, 한 번 동의받은 뒤 필요한 것만 설치한다.
 
@@ -94,7 +95,6 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | 다른 자리에 만들기 | 요약에서 다른 경로를 치거나 `--root <경로>` |
 | 저장소 | 0개. 나중에 `add-repo` 로 더한다 |
 | GitHub | 없음(로컬만) |
-| 호칭 | 「대표님」 |
 | 규칙 스킬 | 채울 자리 틀 전부 |
 | Orca | 있으면 쓰고, 없으면 도구 표에 「설치(선택)」으로 나온다 |
 
@@ -102,8 +102,8 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 
 | 한 줄 설치에 옵션 주기 | 방법 |
 | --- | --- |
-| macOS · Linux | `curl … \| bash -s -- --detail` |
-| Windows | `$env:HARNESS_ARGS='--detail'` 을 먼저 실행한 뒤 설치 명령 |
+| macOS · Linux | `curl … \| bash -s -- --detail` · `curl … \| bash -s -- --title 팀장님` |
+| Windows | `$env:HARNESS_ARGS='--detail'` · `$env:HARNESS_ARGS='--title 팀장님'` 을 먼저 실행한 뒤 설치 명령 |
 
 ### 단계별로 누가 무엇을 하나
 
@@ -214,7 +214,7 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 
 ```json
 {
-  "project": {"name": "Acme 여행", "slug": "acme", "github_org": "acme-inc", "owner_title": "대표님"},
+  "project": {"name": "Acme 여행", "slug": "acme", "github_org": "acme-inc", "owner_title": "주임님"},
   "harness_repo": {"dir": "orchestrator", "base_branch": "main"},
   "repos": [
     {"key": "web", "base_branch": "develop", "stack": "node", "description": "서비스 본체",

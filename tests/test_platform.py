@@ -118,7 +118,7 @@ class NodeSearch(unittest.TestCase):
 
 class ConfigValidation(unittest.TestCase):
     def base(self):
-        return {"project": {"name": "X", "slug": "x", "github_org": "o", "owner_title": "대표님"},
+        return {"project": {"name": "X", "slug": "x", "github_org": "o", "owner_title": "주임님"},
                 "repos": [{"key": "web"}], "engines": ["claude"]}
 
     def test_defaults_fill_remote(self):

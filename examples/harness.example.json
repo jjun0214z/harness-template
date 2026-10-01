@@ -4,7 +4,7 @@
     "name": "Acme 여행",
     "slug": "acme",
     "github_org": "acme-inc",
-    "owner_title": "대표님"
+    "owner_title": "주임님"
   },
   "harness_repo": {
     "dir": "orchestrator",

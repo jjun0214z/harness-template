@@ -33,7 +33,7 @@ class ConnectLocalRepo(unittest.TestCase):
 
     def config(self, connect_files, engines=("claude", "codex")):
         cfg = {
-            "project": {"name": "Link 프로젝트", "slug": "link", "github_org": "", "owner_title": "대표님"},
+            "project": {"name": "Link 프로젝트", "slug": "link", "github_org": "", "owner_title": "주임님"},
             "repos": [
                 {"key": "web", "stack": "node"},
                 {"key": "admin", "source": "local", "path": str(self.legacy), "connect_files": connect_files},
@@ -144,7 +144,7 @@ class ConnectHarness(unittest.TestCase):
         subprocess.run(["git", "-C", str(h), "add", "-A"], check=True, env=env)
         subprocess.run(["git", "-C", str(h), "commit", "-q", "-m", "init"], check=True, env=env)
         head = git(h, "rev-parse", "HEAD", env=env)
-        cfg = {"project": {"name": "Ops", "slug": "ops", "owner_title": "대표님"},
+        cfg = {"project": {"name": "Ops", "slug": "ops", "owner_title": "주임님"},
                "harness_repo": {"source": "local", "path": str(h)},
                "repos": [{"key": "web"}], "engines": ["claude"], "platform": {"python": "python3"}}
         p = sb.tmp / "ops.json"

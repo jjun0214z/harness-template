@@ -73,7 +73,7 @@ class EofStops(unittest.TestCase):
     def test_no_input_stops_fast(self):
         sb = Sandbox()
         self.addCleanup(sb.cleanup)
-        full = "\n".join(["이름", "slug", "", "대표님", "1", "orchestrator", "main",       # --detail 프로젝트 · 하네스
+        full = "\n".join(["이름", "slug", "", "주임님", "1", "orchestrator", "main",       # --detail 프로젝트 · 하네스
                            "web", "1", "", "", "main", "", "3", "", "", ""]) + "\n"     # 저장소 하나 뒤 다음 키에서 입력 끊김
         for args, answers in ((("run",), ""), (("run", "--detail"), ""), (("run", "--detail"), full), (("run",), "이름\n")):
             t = time.time()

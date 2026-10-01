@@ -113,7 +113,7 @@ class Sandbox:
     def config(self, engines, orca, slug="demo"):
         cfg = {
             "version": 1,
-            "project": {"name": "Demo 프로젝트", "slug": slug, "github_org": "demo-org", "owner_title": "대표님"},
+            "project": {"name": "Demo 프로젝트", "slug": slug, "github_org": "demo-org", "owner_title": "주임님"},
             "harness_repo": {"dir": "orchestrator", "remote": "demo-org/orchestrator", "base_branch": "main"},
             "repos": [
                 {"key": "web", "dir": "web", "remote": "demo-org/web", "url": self.bare_repo("web", "develop"),

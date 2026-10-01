@@ -57,10 +57,13 @@ class ConfigError(ValueError):
 
 # ---------------------------------------------------------------- 설정
 
+DEFAULT_OWNER_TITLE = "주임님"  # 결정권자 호칭 기본값. 셋업에서 --title 로 바꾼다
+
+
 def default_config() -> dict:
     return {
         "version": 1,
-        "project": {"name": "", "slug": "", "github_org": "", "owner_title": "대표님"},
+        "project": {"name": "", "slug": "", "github_org": "", "owner_title": DEFAULT_OWNER_TITLE},
         "harness_repo": {"dir": "orchestrator", "remote": "", "base_branch": "main", "source": "new", "path": ""},
         "repos": [],
         "skills": {"fill": list(FILL_SKILLS)},

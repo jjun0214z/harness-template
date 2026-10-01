@@ -139,6 +139,20 @@ class Install(unittest.TestCase):
         self.assertIn("[템플릿] 갱신", r.stdout)
         self.assertIn("bootstrap 은 부르지 않음", r.stdout)
 
+    def test_title_option_reaches_bootstrap(self):
+        """`curl … | bash -s -- --title 팀장님`: run 없이 온 옵션이 bootstrap.py run 까지 가서 3번(호칭) 질문을 건너뛴다."""
+        self.ready_linux()
+        src = self.template_repo()
+        here = self.sb.tmp / "here"
+        here.mkdir()
+        env = dict(HARNESS_TEMPLATE_URL=str(src), HARNESS_CALLER_CWD=str(here), GIT_AUTHOR_NAME="t",
+                   GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+        r = self.install("--title", "팀장님", "--offline", os_name="linux", **env)
+        self.assertNotIn("invalid choice", r.stderr)
+        self.assertNotIn("unrecognized arguments", r.stderr)
+        self.assertIn("하네스 셋업 (질문 2개", r.stdout, r.stdout + r.stderr)   # --title 이 닿았다: 호칭은 묻지 않는다
+        self.assertEqual(r.returncode, 2, "터미널이 없으니 1번 질문에서 멈춘다")
+
     def test_without_git_uses_tarball(self):
         self.link("python3", "curl")
         self.fake("node", "echo v22.1.0")
