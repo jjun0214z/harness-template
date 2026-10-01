@@ -270,7 +270,20 @@ fi
 # ---------------------------------------------------------------- 템플릿 받기 · 갱신
 if [ -d "$DIR/.git" ] && git_ok; then
   say "[템플릿] 갱신 $DIR"
-  git -C "$DIR" pull --ff-only --quiet || say "갱신 실패(로컬 변경이 있을 수 있다). 있는 것으로 계속한다"
+  # 갱신이 안 되면 옛 판으로 셋업하지 않는다(옛 기본값 · 질문이 그대로 나가는 결함). 받아 둔 사본은 템플릿 전용이라
+  # 고친 파일이 없으면 공개본으로 맞추고(공개 이력이 바뀌어 fast-forward 가 안 될 때), 고친 파일이 있으면 멈춘다.
+  git -C "$DIR" fetch --quiet origin \
+    || { say "템플릿 갱신 실패(받기): $(git -C "$DIR" remote get-url origin 2>/dev/null). 옛 판으로 셋업하지 않는다. 연결을 확인하고 다시 부른다"; exit 4; }
+  if ! git -C "$DIR" merge --ff-only --quiet '@{u}' >/dev/null 2>&1; then
+    changed="$(git -C "$DIR" status --porcelain --untracked-files=no)"
+    if [ -n "$changed" ]; then
+      say "템플릿 갱신 실패: $DIR 에 고친 파일이 있다. 옛 판으로 셋업하지 않는다. 옮기거나 지운 뒤 다시 부른다"
+      say "$changed"
+      exit 4
+    fi
+    say "[템플릿] 공개본 이력이 바뀌어 받아 둔 사본을 공개본으로 맞춘다(고친 파일 없음)"
+    git -C "$DIR" reset --quiet --hard '@{u}' || { say "템플릿을 공개본으로 맞추지 못했다: $DIR"; exit 4; }
+  fi
 elif git_ok && [ ! -e "$DIR" ]; then
   say "[템플릿] 받기(git clone) $DIR"
   git clone --quiet --depth 1 "$TEMPLATE_URL" "$DIR" || { say "템플릿 clone 실패: $TEMPLATE_URL"; exit 4; }

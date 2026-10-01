@@ -139,6 +139,65 @@ class Install(unittest.TestCase):
         self.assertIn("[템플릿] 갱신", r.stdout)
         self.assertIn("bootstrap 은 부르지 않음", r.stdout)
 
+    def git_env(self, src):
+        return dict(HARNESS_TEMPLATE_URL=str(src), GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
+                    GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+
+    def rewrite_upstream(self, src, text):
+        """공개본 이력을 다시 쓴다(맨 위 커밋을 바꿔 끼움): 받아 둔 사본은 fast-forward 가 안 된다."""
+        env = self.sb.env()
+        (src / "NEW.txt").write_text(text, encoding="utf-8")
+        subprocess.run(["git", "-C", str(src), "add", "NEW.txt"], check=True, env=env)
+        subprocess.run(["git", "-C", str(src), "commit", "-q", "--amend", "-m", "rewritten"], check=True, env=env)
+
+    def test_rewritten_upstream_aligns_clean_copy(self):
+        """공개 이력이 바뀌어 fast-forward 가 안 돼도 옛 판으로 계속하지 않는다: 고친 파일이 없으면 공개본으로 맞춘다."""
+        self.ready_linux()
+        src = self.template_repo()
+        env = self.git_env(src)
+        r = self.install("--no-run", os_name="linux", **env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.rewrite_upstream(src, "새 판")
+        r = self.install("--no-run", os_name="linux", **env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("공개본으로 맞춘다", r.stdout)
+        self.assertNotIn("있는 것으로 계속한다", r.stdout)
+        dest = self.sb.tmp / "harness-template"
+        self.assertEqual((dest / "NEW.txt").read_text(encoding="utf-8"), "새 판")
+
+    def test_edited_copy_stops_instead_of_old_template(self):
+        self.ready_linux()
+        src = self.template_repo()
+        env = self.git_env(src)
+        r = self.install("--no-run", os_name="linux", **env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        dest = self.sb.tmp / "harness-template"
+        (dest / "README.md").write_text("내가 고침", encoding="utf-8")
+        self.rewrite_upstream(src, "새 판")
+        r = self.install("--no-run", os_name="linux", **env)
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertIn("고친 파일이 있다", r.stdout)
+        self.assertIn("README.md", r.stdout)
+        self.assertEqual((dest / "README.md").read_text(encoding="utf-8"), "내가 고침", "사람이 고친 파일을 덮었다")
+
+    def test_fetch_failure_stops(self):
+        self.ready_linux()
+        src = self.template_repo()
+        env = self.git_env(src)
+        r = self.install("--no-run", os_name="linux", **env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        shutil.rmtree(src)   # 원격이 사라짐(네트워크 끊김 흉내)
+        r = self.install("--no-run", os_name="linux", **env)
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertIn("옛 판으로 셋업하지 않는다", r.stdout)
+
+    def test_install_ps1_update_never_continues_on_old(self):
+        """pwsh 가 없어 실행은 못 한다: install.ps1 도 같은 갈래(받기 실패 · 고친 파일 → 멈춤, 아니면 공개본으로)를 갖는지 본다."""
+        ps = (TEMPLATE / "install.ps1").read_text(encoding="utf-8")
+        self.assertNotIn("pull --ff-only", ps)
+        for needle in ("fetch --quiet origin", "merge --ff-only --quiet '@{u}'", "--untracked-files=no", "reset --quiet --hard '@{u}'"):
+            self.assertIn(needle, ps)
+
     def test_title_option_reaches_bootstrap(self):
         """`curl … | bash -s -- --title 팀장님`: run 없이 온 옵션이 bootstrap.py run 까지 가서 3번(호칭) 질문을 건너뛴다."""
         self.ready_linux()

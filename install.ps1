@@ -137,7 +137,21 @@ if ($py.Count -eq 0) { Write-Host 'python 3.9 이상이 없어 멈춘다. 위 �
 # ---------------------------------------------------------------- 템플릿 받기 · 갱신
 if ((Test-Path (Join-Path $Dir '.git')) -and (Have 'git')) {
     Write-Host "[템플릿] 갱신 $Dir"
-    & git -C $Dir pull --ff-only --quiet
+    # 갱신이 안 되면 옛 판으로 셋업하지 않는다. 고친 파일이 없으면 공개본으로 맞추고, 있으면 멈춘다(install.sh 와 같다)
+    & git -C $Dir fetch --quiet origin
+    if ($LASTEXITCODE -ne 0) { Write-Host "템플릿 갱신 실패(받기). 옛 판으로 셋업하지 않는다. 연결을 확인하고 다시 부른다"; return }
+    & git -C $Dir merge --ff-only --quiet '@{u}' 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        $changed = @(& git -C $Dir status --porcelain --untracked-files=no)
+        if ($changed.Count -gt 0) {
+            Write-Host "템플릿 갱신 실패: $Dir 에 고친 파일이 있다. 옛 판으로 셋업하지 않는다. 옮기거나 지운 뒤 다시 부른다"
+            $changed | ForEach-Object { Write-Host $_ }
+            return
+        }
+        Write-Host '[템플릿] 공개본 이력이 바뀌어 받아 둔 사본을 공개본으로 맞춘다(고친 파일 없음)'
+        & git -C $Dir reset --quiet --hard '@{u}'
+        if ($LASTEXITCODE -ne 0) { Write-Host "템플릿을 공개본으로 맞추지 못했다: $Dir"; return }
+    }
 } elseif ((Have 'git') -and -not (Test-Path $Dir)) {
     Write-Host "[템플릿] 받기(git clone) $Dir"
     & git clone --quiet --depth 1 $TemplateUrl $Dir
