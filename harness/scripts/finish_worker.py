@@ -12,10 +12,20 @@
   6. 그 워크트리에서 도는 Claude 세션(~/.claude/sessions/<pid>.json)이 모두 idle 이다. busy · 응답 대기 · 모르는 상태면 멈춘다
 
 정리 순서: Claude 세션 정상 종료(SIGTERM, 기다림, 안 죽으면 멈추고 보고, SIGKILL 은 쓰지 않는다)
-          → Codex 세션 보관(실패는 경고만) → (Orca) worker-release · worktree rm / (Orca 없음) git worktree remove
+          → 남은 작업자 도구 · 검수 크롬 끄기 → Codex 세션 보관(실패는 경고만)
+          → (Orca) worker-release · worktree rm / (Orca 없음) git worktree remove
+남은 프로세스: 세션을 끝낸 뒤에도 남은 것 중
+  - 끈다: 워크트리를 작업 폴더로 쓰거나 명령줄에 워크트리가 든 알려진 도구(node · next · pnpm · adb · python 등. 개발 서버 · 기기 연결),
+    이 작업 전용 검수 크롬(--user-data-dir 이 워크트리 · 그 Claude 임시 폴더 안이거나 이름에 끝난 작업 이름이 든 것)과 그 헬퍼.
+    신호 직전에 시작 시각을 다시 재서 같은 프로세스일 때만 TERM, 안 꺼지면 KILL(도구에만. 에이전트에는 KILL 을 쓰지 않는다)
+  - 끄지 않고 멈춘다: 에이전트(claude · codex, node 로 도는 것 포함) · 셸 · 이름 모르는 프로세스 · 프로필 없는 크롬 ·
+    사용자 기본 프로필(~/Library · ~/.config) 크롬 · crashpad
+  사전 확인에서도 알려진 도구는 「세션 파일 없이 워크트리를 쓰는 프로세스」로 멈추지 않는다(부모가 끝나 떨어져 나간 개발 서버 등).
 워크트리를 지운 뒤 임시 찌꺼기도 치운다(cleanup_temp.py): 그 워크트리와 없어진 작업 공간의 Claude 임시 폴더, /tmp 검수 찌꺼기.
   찌꺼기는 --dry-run 이 목록 · 합계를 계획에 적고 실제 실행은 그 계획 안에서만 지운다(Windows 는 건너뛴다).
 마지막 줄: 「앱 보관 대상(Claude): <작업 이름>」. Claude 원격 세션 목록의 보관은 스크립트로 못 하므로 deploy 스킬의 「앱 세션 정리」가 한다.
+Codex 세션이 있으면 「앱 보관 대상(Codex): <작업 이름> · <thread id> · 「제목」 · 시작 <시각>」도 낸다.
+CLI 보관(codex archive)은 데스크톱 앱 「최근」 목록에 바로 반영되지 않을 수 있어 앱에서 손으로 보관한다.
 
 사용: python3 harness/scripts/finish_worker.py <워크트리> [--dispatch <id>] [--name <작업 이름>] [--dry-run]
 """
@@ -40,6 +50,18 @@ import harnesslib as hl  # noqa: E402
 import cleanup_temp as ct  # noqa: E402
 
 HARNESS_ROOT = HERE.parents[1]
+KILL_WAIT = float(os.environ.get("HARNESS_KILL_WAIT", "5"))
+CODEX_HOME = os.environ.get("HARNESS_CODEX_HOME") or os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
+# 작업자가 띄워 두고 가는 도구(개발 서버 · 빌드 감시 · 검수 크롬 · 기기 연결). 이 이름만 세션을 끝낸 뒤 끈다.
+TOOL_NAME = re.compile(
+    r"^(node|nodejs|next-server.*|pnpm|npm|npx|yarn|bun|deno|vite|esbuild|turbo|watchman|tsc|jest|vitest|playwright.*"
+    r"|adb|python3?(\.\d+)?|Python|java|ffmpeg|caffeinate|headless_shell|chrome|chromium"
+    r"|Google Chrome.*|Chromium.*|Chrome for Testing.*)$",
+    re.I,
+)
+CHROME_BIN = re.compile(r"(Google Chrome|Chromium|Chrome for Testing|headless_shell|chrome-headless-shell|/chrome)( Helper[^/]*)?(\.app)?(/|$| )", re.I)
+USER_DATA = re.compile(r"--user-data-dir=(\"[^\"]+\"|'[^']+'|\S+)")
+AGENT_SCRIPT = re.compile(r"(^|/)(claude|codex)(\.[cm]?js)?$|@anthropic-ai/claude-code/|@openai/codex/", re.I)
 SETTLED = {"completed", "succeeded", "failed", "done", "settled", "cancelled", "canceled", "stopped", "released"}
 
 
@@ -214,6 +236,164 @@ def processes_in(worktree: str) -> List[int]:
     return sorted({p for p in pids if p != os.getpid() and pid_alive(p)})
 
 
+def ps_full() -> dict:
+    """pid → (ppid, 시작 시각 문자열, 명령줄). 못 재면 멈춘다."""
+    r = subprocess.run(["ps", "-axww", "-o", "pid=,ppid=,lstart=,command="], capture_output=True, text=True,
+                       env={**os.environ, "LC_ALL": "C"})
+    if r.returncode != 0 or not r.stdout.strip():
+        raise Stop("ps 로 프로세스 목록을 읽지 못했다. 끄지도 지우지도 않는다")
+    table = {}
+    for line in r.stdout.splitlines():
+        parts = line.split(None, 7)
+        if len(parts) == 8 and parts[0].isdigit() and parts[1].isdigit():
+            table[int(parts[0])] = (int(parts[1]), " ".join(parts[2:7]), parts[7])
+    return table
+
+
+def looks_like_agent(command: str) -> bool:
+    """실행 파일 또는 런타임(node · bun) 다음 스크립트가 claude · codex 인가. 이름이 node 여도 에이전트면 끄지 않는다."""
+    tokens = command.split()
+    if not tokens:
+        return False
+    if AGENT_SCRIPT.search(tokens[0]):
+        return True
+    return os.path.basename(tokens[0]) in RUNTIMES and len(tokens) > 1 and bool(AGENT_SCRIPT.search(tokens[1]))
+
+
+def user_data_dir(command: str) -> str:
+    found = USER_DATA.search(command)
+    return found.group(1).strip("\"'") if found else ""
+
+
+def user_chrome(command: str) -> bool:
+    """사용자가 쓰는 크롬: 프로필을 따로 주지 않았거나 기본 프로필 자리(~/Library · ~/.config)를 쓴다. crashpad 도 여기 넣는다."""
+    if "crashpad" in command.lower():
+        return True
+    profile = user_data_dir(command)
+    if not profile:
+        return True
+    home = real(Path.home())
+    path = real(os.path.expanduser(profile))
+    return any(inside(path, os.path.join(home, d)) for d in ("Library", ".config"))
+
+
+def test_chromes(wt: str, finished: List[str], table: dict, in_wt: set) -> dict:
+    """이 작업 전용 검수 크롬(본체 · 헬퍼). pid → 이유. 사용자 크롬 · crashpad 는 넣지 않는다."""
+    claude_tmp = os.path.join(ct.CLAUDE_TMP_ROOT, ct.claude_tmp_name(wt))
+    linked = {}
+    for pid, (_pp, _st, command) in table.items():
+        if not CHROME_BIN.search(command) or user_chrome(command):
+            continue
+        profile = real(user_data_dir(command))
+        base = os.path.basename(profile)
+        if inside(profile, wt):
+            linked[profile] = "프로필이 워크트리 안"
+        elif inside(profile, real(claude_tmp)):
+            linked[profile] = "프로필이 이 작업의 Claude 임시 폴더 안"
+        elif any(len(n) >= 6 and n in base for n in finished):
+            linked[profile] = f"프로필 이름에 끝난 작업 이름({base})"
+        elif pid in in_wt:
+            linked[profile] = "워크트리에서 띄움"
+    return {pid: f"검수 크롬 · {linked[real(user_data_dir(c))]}" for pid, (_pp, _st, c) in table.items()
+            if CHROME_BIN.search(c) and not user_chrome(c) and real(user_data_dir(c)) in linked}
+
+
+def is_tool(pid: int, table: dict, names: dict) -> bool:
+    command = table.get(pid, (0, "", ""))[2]
+    name = names.get(pid, os.path.basename(command.split()[0]) if command.split() else "")
+    if looks_like_agent(command) or name in SHELLS:
+        return False
+    if CHROME_BIN.search(command):
+        return not user_chrome(command)
+    return bool(TOOL_NAME.match(name))
+
+
+def leftovers(wt: str, finished: List[str]) -> tuple:
+    """남은 프로세스를 (끌 것, 남기면 멈출 것) 으로 나눈다. pid → 설명."""
+    table = ps_full()
+    names = {pid: comm for pid, (_pp, comm) in process_table().items()}
+    in_wt = set(processes_in(wt))
+    mine, pid = {os.getpid()}, os.getpid()
+    while pid in table and table[pid][0] > 1:  # 나를 부른 셸 · 에이전트 사슬은 건드리지 않는다
+        pid = table[pid][0]
+        mine.add(pid)
+    found = set(in_wt) | {p for p, (_pp, _st, c) in table.items() if wt in c}
+    kill, block = {}, {}
+    for pid in sorted(found - mine):
+        if pid not in table:
+            continue
+        label = f"pid {pid} ({names.get(pid) or '?'})"
+        if is_tool(pid, table, names):
+            kill[pid] = label
+        elif CHROME_BIN.search(table[pid][2]):
+            block[pid] = f"{label} 사용자 크롬일 수 있음"
+        else:
+            block[pid] = label
+    for pid, why in test_chromes(wt, finished, table, in_wt).items():
+        if pid not in mine and pid not in block:
+            kill.setdefault(pid, f"pid {pid} ({why})")
+    return kill, block
+
+
+def stop_tools(targets: dict) -> List[str]:
+    """시작 시각이 그대로인 것만 TERM, KILL_WAIT 안에 안 꺼지면 KILL. 끈 것 설명 목록."""
+    if not targets:
+        return []
+    before = ps_full()
+    started = {pid: before[pid][1] for pid in targets if pid in before}
+    for pid in started:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    deadline = time.time() + KILL_WAIT
+    while time.time() < deadline and any(pid_alive(p) for p in started):
+        time.sleep(0.2)
+    now = ps_full()
+    for pid, start in started.items():
+        if pid in now and now[pid][1] == start:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    return [targets[p] for p in started]
+
+
+def codex_threads(wt: str) -> List[dict]:
+    """이 워크트리에서 돈 Codex 세션(보관 전 · 후 둘 다). rollout 첫 줄의 cwd 로 맞추고 제목은 상태 DB 에서 읽는다(못 읽어도 id 는 낸다)."""
+    found: dict = {}
+    for folder, pattern in (("sessions", "**/rollout-*.jsonl"), ("archived_sessions", "rollout-*.jsonl")):
+        root = Path(CODEX_HOME) / folder
+        for f in root.glob(pattern) if root.is_dir() else []:
+            try:
+                with f.open(encoding="utf-8") as fh:
+                    payload = json.loads(fh.readline()).get("payload") or {}
+            except (OSError, ValueError, AttributeError):
+                continue
+            sid = payload.get("session_id") or payload.get("id")
+            if sid and payload.get("cwd") and real(payload["cwd"]) == wt:
+                found[sid] = {"id": sid, "started": str(payload.get("timestamp") or "")[:16], "title": ""}
+    if found:
+        try:
+            import sqlite3
+            dbs = sorted(Path(CODEX_HOME).glob("state_*.sqlite"))
+            if dbs:
+                conn = sqlite3.connect(f"file:{dbs[-1]}?mode=ro", uri=True, timeout=2)
+                marks = ",".join("?" * len(found))
+                for sid, name, title in conn.execute(f"select id, name, title from threads where id in ({marks})", list(found)):
+                    text = name or title or ""
+                    found[sid]["title"] = text.splitlines()[0][:60] if text else ""
+                conn.close()
+        except Exception:  # 제목은 찾기 도움일 뿐이다
+            pass
+    return sorted(found.values(), key=lambda t: t["started"])
+
+
+def codex_lines(name: str, threads: List[dict]) -> List[str]:
+    return [f"앱 보관 대상(Codex): {name} · {t['id']}" + (f" · 「{t['title']}」" if t["title"] else "") + f" · 시작 {t['started'] or '모름'}"
+            for t in threads]
+
+
 def check(worktree: Path, dispatch: Optional[str], orca: Optional[str], cfg: Optional[dict]) -> List[dict]:
     """안전 조건 1~6. 통과하면 끝낼 Claude 세션 목록을 돌려준다."""
     wt = real(worktree)
@@ -258,8 +438,14 @@ def check(worktree: Path, dispatch: Optional[str], orca: Optional[str], cfg: Opt
         st = s.get("status")
         if st != "idle":
             raise Stop(f"Claude 세션 {s.get('name') or s.get('pid')} 가 쉬는 상태가 아니다(status={st or '모름'}). 작업 중이거나 응답 대기면 끝내지 않는다")
-    allowed = {s["pid"] for s in sessions} | (session_family(sessions, process_table()) if sessions else set())
+    table = process_table()
+    allowed = {s["pid"] for s in sessions} | (session_family(sessions, table) if sessions else set())
     others = [p for p in processes_in(wt) if p not in allowed]
+    if others:
+        # 부모가 끝나 떨어져 나간 개발 서버 같은 알려진 도구는 세션을 끝낸 뒤 끈다
+        full = ps_full()
+        names = {pid: comm for pid, (_pp, comm) in table.items()}
+        others = [p for p in others if not is_tool(p, full, names)]
     if others:
         raise Stop(f"세션 파일 없이 이 워크트리를 쓰는 프로세스가 있다(pid {', '.join(map(str, others))}). 끝내지도 지우지도 않는다")
     return sessions
@@ -309,7 +495,9 @@ def archive_codex(worktree: str, cfg: Optional[dict]) -> Optional[str]:
         return None
     r = subprocess.run([sys.executable, str(script), worktree], capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if r.returncode != 0:
-        return f"경고: Codex 세션 보관 실패(정리는 계속한다): {(r.stderr or r.stdout).strip()[-200:]}"
+        # Claude 샌드박스 안에서는 codex archive 가 파일 시각 설정(set_times)에서 막힐 수 있다. 워크트리가 없어도 cwd 문자열로 다시 찾는다
+        return (f"경고: Codex 세션 보관 실패(정리는 계속한다): {(r.stderr or r.stdout).strip()[-200:]}\n"
+                f"다시 보관: 샌드박스 밖(사용자 터미널)에서 {sys.executable} {script} {worktree}")
     return None
 
 
@@ -383,7 +571,16 @@ def main(argv=None) -> int:
             print(f"[미리보기] 안전 조건 통과: {wt}")
             print(f"  끝낼 Claude 세션: {', '.join(str(s['pid']) for s in sessions) or '없음'} · 지울 워크트리: {wt}")
             branch = git(wt, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+            try:
+                kill, _block = leftovers(wt, finished_names(wt, branch))
+            except Stop as exc:
+                kill = {}
+                print(f"  남은 프로세스를 재지 못함: {exc}")
+            for line in sorted(kill.values()):
+                print(f"  끌 것(지금 기준) : {line}")
             sweep_temp(wt, cfg, False, finished_names(wt, branch))
+            for line in codex_lines(os.path.basename(wt), codex_threads(wt)):
+                print(line)
             print(name)
             return 0
         with CleanupLock():
@@ -392,6 +589,12 @@ def main(argv=None) -> int:
             if args.dispatch and orca:
                 subprocess.run([orca, "orchestration", "worker-release", "--dispatch", args.dispatch, "--json"], capture_output=True)
             left = wait_empty(wt, args.wait)
+            branch = git(wt, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+            kill, block = leftovers(wt, finished_names(wt, branch))  # 워크트리 밖 검수 크롬도 본다
+            if (kill or left) and not block:
+                for line in stop_tools(kill):
+                    print(f"끔 : {line}")
+                left = wait_empty(wt, args.wait)
             if left:
                 how = ("Orca 가 터미널을 아직 닫지 않았다. Orca 에서 그 작업자 터미널을 닫고 다시 부른다" if args.dispatch
                        else "작업자를 띄운 터미널(셸)이 아직 열려 있다. 그 터미널을 닫고 다시 부른다")
@@ -465,6 +668,7 @@ def sweep_temp(wt: str, cfg: Optional[dict], apply: bool, finished: List[str]) -
 
 
 def remove(args, wt: str, cfg: Optional[dict], orca: Optional[str], name: str) -> int:
+    threads = codex_threads(wt)  # 보관하면 rollout 이 옮겨지므로 먼저 모은다
     warn = archive_codex(wt, cfg)
     if warn:
         print(warn, file=sys.stderr)
@@ -481,6 +685,8 @@ def remove(args, wt: str, cfg: Optional[dict], orca: Optional[str], name: str) -
         return 1
     print(f"정리 완료: {wt}")
     sweep_temp(wt, cfg, True, finished_names(wt, branch))
+    for line in codex_lines(os.path.basename(wt), threads):
+        print(line)
     print(name)
     return 0
 

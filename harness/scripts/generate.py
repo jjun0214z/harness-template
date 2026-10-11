@@ -364,6 +364,10 @@ def core_md(cfg: dict, ctx: Dict[str, str]) -> str:
 - 작업은 공유 체크아웃이 아니라 과제마다 워크트리에서. add 는 경로를 명시한다.
 - 커밋 메시지: `type(scope): 요약` (feat · fix · docs · chore · refactor · test).
 
+## 작업 끝 정리 (`task-brief` · `deploy` 스킬)
+- 작업자는 끝 보고 전에 자기가 띄운 개발 서버 · 검수용 크롬 · adb 서버를 끄고, 다시 만들 수 있는 찌꺼기는 정확한 경로를 `rm -rf` 로 바로 지운다. `trash` · Finder 휴지통으로 보내지 않는다(휴지통은 용량이 그대로 남는다).
+- 남은 것은 정리 스크립트(`finish_worker.py`)가 세션을 끝낸 뒤 끈다. `~/Documents` · 사용자 파일 · 사용자 크롬은 건드리지 않는다.
+
 ## 기록
 - 작업 기록은 {ctx['tracker']}. 근거는 하네스 `docs/기록/`.
 
@@ -407,6 +411,11 @@ description: {p['name']} {r['dir']} 저장소({r.get('remote') or r.get('url') o
 - `git push` · 머지 · 배포. 커밋까지만 하고 오케스트레이터에게 넘긴다.
 - 다른 저장소 수정 · 받은 과제 밖의 수정(필요해 보이면 보고에 적는다).
 - `git add -A` · `git commit -a`. 경로를 명시해서 add 한다.
+
+## 끝나기 전 치울 것
+- 자기가 띄운 개발 서버 · 검수용 크롬(`--user-data-dir=/tmp/...`) · adb 서버를 pid 로 끈다. 사용자 크롬 · crashpad 는 건드리지 않는다.
+- 다시 만들 수 있는 찌꺼기(검사용 사본 · 크롬 프로필 · 미리보기 · `__pycache__` · 브리프/보고 임시 파일)는 정확한 경로를 `rm -rf` 로 바로 지운다. `trash` · Finder 휴지통으로 보내지 않는다(휴지통은 용량이 그대로 남는다).
+- `~/Documents` 와 사용자 파일은 지우지 않는다. 지워도 되는지 모르면 남기고 보고에 적는다.
 
 ## 보고 (마지막 메시지 형식)
 | 항목 | 내용 |

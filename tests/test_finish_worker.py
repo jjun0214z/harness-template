@@ -341,6 +341,97 @@ class FinishWorker(unittest.TestCase):
         self.assertTrue(any(c["tool"] == "orca" and c["args"][:2] == ["worktree", "rm"] for c in calls))
         self.assertTrue(any(c["tool"] == "orca" and c["args"][:2] == ["orchestration", "worker-release"] for c in calls))
 
+    # ---------------------------------------------------------------- 남은 도구 · 검수 크롬 · Codex 앱 목록
+
+    def tool(self, cwd, *args, exe=None):
+        """이름이 알려진 도구(python)로 도는 남은 프로세스. exe 를 주면 그 경로의 스크립트로 돈다(명령줄 흉내)."""
+        script = Path(exe or (self.sb.tmp / "server.py"))
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text("import time\ntime.sleep(120)\n", encoding="utf-8")
+        p = self.spawn([sys.executable, str(script), *args], cwd)
+        time.sleep(0.3)
+        return p
+
+    def test_leftover_dev_server_is_stopped_then_removed(self):
+        wt = self.worktree()
+        server = self.tool(wt)  # 세션 파일 없이 남은 개발 서버(부모가 끝나 떨어져 나간 것)
+        r = self.finish(wt)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"끔 : pid {server.pid}", r.stdout)
+        self.assertIsNotNone(server.wait(timeout=10))
+        self.assertFalse(wt.exists())
+
+    def test_dry_run_lists_leftover_without_stopping(self):
+        wt = self.worktree()
+        server = self.tool(wt)
+        r = self.finish(wt, "--dry-run")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"끌 것(지금 기준) : pid {server.pid}", r.stdout)
+        self.assertIsNone(server.poll())
+
+    def test_test_chrome_named_after_task_is_stopped(self):
+        wt = self.worktree(name="leftover-task")
+        profile = self.sb.tmp / "leftover-task-chrome"
+        profile.mkdir()
+        exe = self.sb.tmp / "Chrome for Testing.app" / "Contents" / "MacOS" / "fake.py"
+        chrome = self.tool(self.sb.tmp, f"--user-data-dir={profile}", "--headless", exe=exe)
+        r = self.finish(wt)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"끔 : pid {chrome.pid} (검수 크롬", r.stdout)
+        self.assertIsNotNone(chrome.wait(timeout=10))
+
+    def test_unrelated_test_chrome_is_left_alone(self):
+        wt = self.worktree(name="leftover-task")
+        other = self.sb.tmp / "other-profile"
+        other.mkdir()
+        exe = self.sb.tmp / "Chrome for Testing.app" / "Contents" / "MacOS" / "fake.py"
+        chrome = self.tool(self.sb.tmp, f"--user-data-dir={other}", exe=exe)
+        r = self.finish(wt)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn(f"pid {chrome.pid}", r.stdout)
+        self.assertIsNone(chrome.poll())
+
+    def test_chrome_without_profile_in_worktree_is_kept(self):
+        # 프로필을 따로 주지 않은 크롬은 사용자 크롬일 수 있다. 끄지 않고 멈춘다
+        wt = self.worktree()
+        exe = self.sb.tmp / "Google Chrome.app" / "Contents" / "MacOS" / "fake.py"
+        chrome = self.tool(wt, exe=exe)
+        self.assertKept(self.finish(wt), wt, chrome, "세션 파일 없이 이 워크트리를 쓰는 프로세스")
+
+    def test_agent_run_by_runtime_and_user_chrome_are_not_tools(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("fw", self.harness / "harness/scripts/finish_worker.py")
+        fw = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fw)
+        for command in ("/opt/homebrew/bin/codex --full-auto", "node /usr/lib/node_modules/@openai/codex/bin/codex.js",
+                        "node /x/node_modules/@anthropic-ai/claude-code/cli.js", "/home/u/.local/bin/claude"):
+            self.assertTrue(fw.looks_like_agent(command), command)
+        for command in ("node /w/node_modules/.bin/next dev", "python3 -m http.server", "node /w/scripts/claude-notes.js"):
+            self.assertFalse(fw.looks_like_agent(command), command)
+        home = os.path.realpath(Path.home())
+        self.assertTrue(fw.user_chrome("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
+        self.assertTrue(fw.user_chrome(f"/x/chrome --user-data-dir={home}/.config/google-chrome"))
+        self.assertTrue(fw.user_chrome("/x/chrome_crashpad_handler --user-data-dir=/tmp/p"))
+        self.assertFalse(fw.user_chrome("/x/Google Chrome --headless --user-data-dir=/tmp/preview-chrome"))
+
+    def test_codex_app_target_lines(self):
+        # CLI 보관이 데스크톱 앱 「최근」에 바로 반영되지 않을 수 있어 앱에서 손으로 보관할 줄을 남긴다
+        wt = self.worktree(under_ws=True)
+        sess = self.sb.home / ".codex" / "sessions" / "2026" / "01" / "02"
+        sess.mkdir(parents=True)
+        meta = {"payload": {"cwd": str(wt.resolve()), "id": "thread-9", "timestamp": "2026-01-02T03:04:05Z"}}
+        (sess / "rollout-2026-01-02T03-04-05-thread-9.jsonl").write_text(json.dumps(meta) + "\n", encoding="utf-8")
+        import sqlite3
+        conn = sqlite3.connect(self.sb.home / ".codex" / "state_5.sqlite")
+        conn.execute("create table threads (id text primary key, name text, title text)")
+        conn.execute("insert into threads values ('thread-9', 'Report task outcome', 'You are a worker')")
+        conn.commit()
+        conn.close()
+        r = self.finish(wt, "--dispatch", "ctx_1", FAKE_CODEX_ARCHIVE="1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"앱 보관 대상(Codex): {wt.name} · thread-9 · 「Report task outcome」 · 시작 2026-01-02T03:04", r.stdout)
+        self.assertIn("다시 보관: 샌드박스 밖", r.stderr)
+
 
 class GeneratedCleanupDocs(unittest.TestCase):
     def test_deploy_and_claude_md_have_app_session_cleanup(self):
@@ -357,6 +448,15 @@ class GeneratedCleanupDocs(unittest.TestCase):
             self.assertIn(must, deploy)
         for gone in ("정확히 같고", "같은 제목이 둘 이상"):
             self.assertNotIn(gone, deploy)
+        for must in ("끌 것(지금 기준)", "앱 보관 대상(Codex)", "다시 보관:", "a[href=\"/code/<ID>\"]", "button[aria-label$=\"더 많은 옵션\"]",
+                     "남길 것", "휴지통으로 보내지 않고 바로 지운다"):
+            self.assertIn(must, deploy)
+        core = (target / "plugins/demo/core.md").read_text(encoding="utf-8")
+        self.assertIn("`trash` · Finder 휴지통으로 보내지 않는다", core)
+        worker = next((target / "plugins/demo/agents").glob("*-worker.md")).read_text(encoding="utf-8")
+        self.assertIn("## 끝나기 전 치울 것", worker)
+        brief = (target / "plugins/demo/skills/task-brief/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("휴지통으로 보내지 않는다", brief)
         claude_md = (target / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("8. push 가 끝나면 `deploy` 스킬 「작업 공간 · 앱 세션 정리」", claude_md)
         self.assertIn("/code/<bridgeSessionId>", claude_md)

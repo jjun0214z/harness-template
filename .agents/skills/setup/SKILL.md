@@ -52,6 +52,20 @@ harness.json 에 더하고, 그 저장소만 준비(새로 만들기 · 받기 �
 사용자가 터미널에서 직접 하려면 `PY harness/scripts/bootstrap.py add-repo` (대화형). 끝나면 바뀐 하네스 파일을 경로를 명시해 커밋한다.
 끝나고 반드시 알린다: **새 작업자 `<키>-worker` 는 지금 열려 있는 세션에서는 보이지 않는다.** 에이전트 목록은 세션이 시작할 때 읽히므로 세션(claude · codex)을 닫고 다시 열어야 쓸 수 있다.
 
+## 7-2. 정리 명령 허용 규칙 (Claude `/permissions`, 선택)
+작업 정리(`deploy` 스킬 「작업 공간 · 앱 세션 정리」)는 워크트리 삭제 · 남은 프로세스 끄기 · 임시 폴더 지우기를 한다. 자동 승인 모드가 이것을 파괴적 명령으로 보고 막으면 정리가 사용자 터미널로 넘어간다.
+아래 문자열을 사용자가 `/permissions` → Allow 에 하나씩 넣는다(에이전트는 설정 파일을 직접 고치지 않는다). 하네스 폴더에서 부르는 꼴이고, `python3` 은 이 기기의 파이썬 명령으로 바꾼다.
+```
+Bash(python3 harness/scripts/finish_worker.py:*)
+Bash(python3 harness/scripts/cleanup_worktrees.py:*)
+Bash(python3 harness/scripts/cleanup_temp.py:*)
+Bash(bash scripts/orca-finish-worker.sh:*)
+Bash(orca orchestration worker-release:*)
+Bash(orca worktree rm:*)
+```
+- 프로세스 끄기는 정리 스크립트 안에서 정해진 것만 끈다. `Bash(kill:*)` · `Bash(pkill:*)` 처럼 넓게 허용하지 않는다. 휴지통 비우기 · `rm -rf` 일반 허용도 넣지 않는다.
+- Claude 샌드박스가 켜져 있으면 `codex archive` 가 파일 시각 설정에서 실패할 수 있다. 허용 규칙으로는 풀리지 않으니 정리 출력의 `다시 보관:` 명령을 사용자 터미널에서 돌린다.
+
 ## 하지 말 것
 - 사용자 동의 없이 도구 설치 · GitHub 저장소 생성 · 전역 설정 변경을 하지 않는다.
 - 템플릿 폴더 자체에 하네스를 만들지 않는다.

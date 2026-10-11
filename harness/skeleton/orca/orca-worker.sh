@@ -32,6 +32,7 @@ spec="$spec
 [작업자 공통] 배정된 $dir 저장소의 이 워크트리에서만 일한다. 고쳤으면 커밋까지 하고 push 하지 않는다(오케스트레이터가 검토 뒤 올린다).
 끝나면 $ORCA orchestration send --type worker_done --outcome succeeded --subject \"<한 줄 요약>\" --body \"<바꾼 파일 · 검증 명령과 결과 · 커밋 SHA>\" --task-id <task_id> --dispatch-id <dispatch_id> --from <handle> 로 보고한다(실패면 --outcome failed).
 중간 지시 확인: 커밋마다, 테스트를 돌린 뒤, worker_done 직전에 $ORCA orchestration check --terminal <handle> --json 으로 새 지시를 읽고 따른다. consumer_fenced 가 나오면 멈춘다.
+끝내기 전: 자기가 띄운 개발 서버 · 검수용 크롬 · adb 서버를 끄고, 다시 만들 수 있는 찌꺼기는 정확한 경로를 rm -rf 로 바로 지운다. trash · Finder 휴지통으로 보내지 않는다(용량이 그대로 남는다). ~/Documents 와 사용자 파일은 지우지 않는다.
 막히면 $ORCA orchestration send --type escalation --subject \"<무엇이 막혔나>\" --body \"<선택지>\" 로 묻는다."
 # 기준 ref 는 그 저장소에 실제로 있는 것만 쓴다. 원격이 없는 저장소에는 origin/<기준> 이 없다(로컬 기준 브랜치로 떨어진다).
 common="$(git -C "$HARNESS_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$HARNESS_ROOT/.git")"

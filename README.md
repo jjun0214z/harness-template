@@ -327,8 +327,9 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | 어디 | 어떻게 |
 | --- | --- |
 | Claude 세션 | 정상 종료만 한다(안 끝나면 멈추고 보고) |
-| Codex 세션 | `codex archive` 로 보관한다 |
+| Codex 세션 | `codex archive` 로 보관한다. 데스크톱 앱 「최근」에는 남을 수 있어 출력의 `앱 보관 대상(Codex)` 줄을 보고 앱에서 보관한다 |
 | Claude 앱 · 웹 · 폰의 원격 세션 목록 | 스크립트로 보관할 공개 방법이 없다. 아래 방법으로 사람이 정리한다 |
+| 작업자가 띄워 두고 간 프로세스 | 개발 서버 · adb 같은 알려진 도구와 그 작업 전용 검수 크롬은 끈다. 에이전트 · 셸 · 모르는 프로세스 · 사용자 크롬 · crashpad 는 끄지 않고 멈춘다 |
 
 워크트리를 지운 뒤 디스크를 잡아먹는 임시 찌꺼기도 치운다(macOS · Linux, `harness/scripts/cleanup_temp.py`). `cleanup_worktrees.py` 도 같다.
 
@@ -340,6 +341,8 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | 보고서 미디어(선택) | `cleanup_temp.py junk --media-dir <폴더>` 로 줄 때만. 7일 지난 그림 · 영상 · json, md 는 남긴다 |
 
 찌꺼기는 미리보기(`--dry-run` · 기본)가 목록 · 크기 합계를 계획에 적고, 실제 실행은 그 계획 안에서 다시 확인한 것만 지운다.
+휴지통으로 보내지 않고 바로 지운다. 휴지통(`~/.Trash`)은 크기와 찌꺼기로 보이는 항목 수만 보이고 비우지 않는다(개인 파일이 섞여 있을 수 있다).
+작업자 지침에도 「찌꺼기는 `rm -rf`, `trash` · Finder 휴지통 금지 · 끝나기 전 띄운 서버 · 크롬 끄기」가 들어간다. 자동 승인에서 정리 명령이 막히면 `setup` 스킬 「정리 명령 허용 규칙」을 `/permissions` 에 넣는다.
 
 <details><summary>원격 세션 목록 정리 방법</summary>
 

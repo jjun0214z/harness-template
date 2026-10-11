@@ -20,6 +20,9 @@
 - junk 는 미리보기가 목록 · 합계를 보이고 계획(~/.cache/harness/cleanup-junk-plan.json)에 적는다.
   --apply 는 24시간 안의 계획이 있어야 하고, 그 계획 안에서 다시 확인해 통과한 것만 지운다
 - 크기만 보고: ~/.codex/sessions(대화 기록) · Claude 임시 뿌리. 지우지 않는다
+- 휴지통(~/.Trash)은 크기와 작업 찌꺼기로 보이는 항목 수만 보인다. 사용자 파일이 섞여 있어 비우기는 사용자가 한다.
+  이 스크립트는 휴지통으로 보내지 않고 바로 지운다. 작업자도 `trash` · Finder 휴지통 대신 정확한 경로를 `rm -rf` 한다
+  (휴지통으로 보낸 찌꺼기는 용량이 그대로 남는다)
 
 사용:
   cleanup_temp.py claude-tmp [--apply] <워크트리 경로>...   그 워크트리들의 Claude 임시 폴더
@@ -537,7 +540,39 @@ def print_junk_table(cands: list[tuple[str, int, str, str]]) -> None:
     print(f"합계 전체 : {len(cands)}개 · {human(total)}")
 
 
+TRASH_DIR = os.environ.get("HARNESS_TRASH_DIR", str(Path.home() / ".Trash"))
+# 휴지통에 쌓인 작업 찌꺼기로 보이는 이름(검수 사본 · 크롬 프로필 · 미리보기 · 실행 캐시 · 브리프/보고 임시 파일)
+TRASH_JUNK = re.compile(r"(verify|gate|preview|chrome|profile|__pycache__|brief|report|scratch|worktree|code_sign_clone|playwright)", re.I)
+
+
+def trash_report() -> None:
+    """휴지통 크기와 작업 찌꺼기로 보이는 것. 지우지 않는다(사용자 파일이 같이 있다)."""
+    root = TRASH_DIR
+    if not os.path.isdir(root):
+        return
+    try:
+        names = sorted(os.listdir(root))
+    except OSError as error:
+        print(f"크기만 휴지통 : {root} 를 읽지 못함({error.strerror or error})")
+        return
+    junk = [n for n in names if TRASH_JUNK.search(n)]
+    size = sum(scan_size(os.path.join(root, n)) for n in junk)
+    print(f"크기만 휴지통 : {root} ({size_text(root)}, {len(names)}개) · 지우지 않음. 비우기는 사용자가")
+    if junk:
+        shown = ", ".join(junk[:8]) + (f" 외 {len(junk) - 8}개" if len(junk) > 8 else "")
+        print(f"  그중 작업 찌꺼기로 보이는 것 {len(junk)}개 · {human(size)} : {shown}")
+
+
+def scan_size(path: str) -> int:
+    try:
+        return scan(path)[0]
+    except (OSError, Unsafe):
+        return 0
+
+
 def size_only_report() -> None:
+    if os.environ.get("HARNESS_TRASH_DIR") or not os.environ.get("HARNESS_SIZE_ONLY_OFF"):
+        trash_report()
     if os.environ.get("HARNESS_SIZE_ONLY_OFF"):  # 시험에서 진짜 홈 폴더를 재지 않게
         return
     for label, path in SIZE_ONLY:

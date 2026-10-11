@@ -378,6 +378,28 @@ class JunkTest(unittest.TestCase):
         run("junk", "--apply", "--media-dir", str(self.reports))
         self.assertFalse((folder / "shot.png").exists())
 
+    def test_trash_is_reported_never_emptied(self) -> None:
+        """휴지통은 크기와 찌꺼기로 보이는 항목 수만 보이고 사용자 파일과 함께 그대로 둔다."""
+        trash = self.root / "Trash"
+        self.old_tree(trash / "web-verify.AbC123", {"x.bin": b"x" * 5000})
+        self.old_tree(trash / "__pycache__ 1", {"a.pyc": b"x"})
+        self.old_tree(trash / "family-photos", {"a.jpg": b"x" * 5000})
+        os.environ["HARNESS_TRASH_DIR"] = str(trash)
+        self.addCleanup(os.environ.pop, "HARNESS_TRASH_DIR", None)
+        result = self.run_junk()
+        self.assertIn(f"크기만 휴지통 : {trash} (", result.stdout)
+        self.assertIn("작업 찌꺼기로 보이는 것 2개", result.stdout)
+        self.assertNotIn("family-photos", result.stdout.split("작업 찌꺼기로 보이는 것", 1)[1])
+        self.run_junk("--apply")
+        for name in ("web-verify.AbC123", "__pycache__ 1", "family-photos"):
+            self.assertTrue((trash / name).is_dir(), name)
+
+    def test_removal_never_goes_to_trash(self) -> None:
+        """지우기는 바로 지운다: 휴지통으로 보내는 명령을 쓰지 않는다."""
+        source = CLEAN.read_text(encoding="utf-8")
+        for bad in ("/usr/bin/trash", "trashItem", "move_to_trash", '"trash"', "send2trash"):
+            self.assertNotIn(bad, source)
+
 
 if __name__ == "__main__":
     unittest.main()
