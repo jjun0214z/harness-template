@@ -308,6 +308,12 @@ def is_tool(pid: int, table: dict, names: dict) -> bool:
     return bool(TOOL_NAME.match(name))
 
 
+def mentions_path(command: str, path: str) -> bool:
+    """명령줄에 그 경로(또는 그 아래 경로)가 인자로 들었나. 앞은 시작 · 공백 · = · 따옴표, 뒤는 끝 · / · 공백 · 따옴표여야 한다.
+    문자열 포함만 보면 .../job 정리 때 .../job2 같은 이웃 작업 공간 프로세스까지 잡는다."""
+    return re.search(r"(?:^|[\s=\"'])" + re.escape(path.rstrip("/")) + r"(?=$|[/\s\"'])", command) is not None
+
+
 def leftovers(wt: str, finished: List[str]) -> tuple:
     """남은 프로세스를 (끌 것, 남기면 멈출 것) 으로 나눈다. pid → 설명."""
     table = ps_full()
@@ -317,7 +323,7 @@ def leftovers(wt: str, finished: List[str]) -> tuple:
     while pid in table and table[pid][0] > 1:  # 나를 부른 셸 · 에이전트 사슬은 건드리지 않는다
         pid = table[pid][0]
         mine.add(pid)
-    found = set(in_wt) | {p for p, (_pp, _st, c) in table.items() if wt in c}
+    found = set(in_wt) | {p for p, (_pp, _st, c) in table.items() if mentions_path(c, wt)}
     kill, block = {}, {}
     for pid in sorted(found - mine):
         if pid not in table:

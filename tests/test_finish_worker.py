@@ -398,6 +398,29 @@ class FinishWorker(unittest.TestCase):
         chrome = self.tool(wt, exe=exe)
         self.assertKept(self.finish(wt), wt, chrome, "세션 파일 없이 이 워크트리를 쓰는 프로세스")
 
+    def test_neighbor_worktree_process_is_not_stopped(self):
+        # 이름이 정리 대상 워크트리로 시작하는 이웃 작업 공간(leftover-task → leftover-task2)의 개발 서버는 끄지 않는다
+        wt = self.worktree(name="leftover-task")
+        neighbor = self.worktree(name="leftover-task2")
+        server = self.tool(neighbor, exe=neighbor.parent / "leftover-task2-server.py")
+        r = self.finish(wt)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn(f"pid {server.pid}", r.stdout)
+        self.assertIsNone(server.poll())
+
+    def test_command_line_path_needs_boundary(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("fw", self.harness / "harness/scripts/finish_worker.py")
+        fw = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fw)
+        wt = "/w/web/task-1"
+        for command in (f"node {wt}/node_modules/.bin/next dev", f"python3 {wt}", f"chrome --user-data-dir={wt}/p",
+                        f'node "{wt}/x.js"', f"{wt}/bin/tool"):
+            self.assertTrue(fw.mentions_path(command, wt), command)
+        for command in (f"node {wt}b/node_modules/.bin/next dev", f"python3 {wt}-2/x.py", f"chrome --user-data-dir={wt}b",
+                        f"node /other{wt}/x.js"):
+            self.assertFalse(fw.mentions_path(command, wt), command)
+
     def test_agent_run_by_runtime_and_user_chrome_are_not_tools(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("fw", self.harness / "harness/scripts/finish_worker.py")
