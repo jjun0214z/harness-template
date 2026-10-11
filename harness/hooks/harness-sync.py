@@ -42,10 +42,19 @@ def session_start(root):
     sys.exit(0)
 
 
+def is_bytecode_cache(line):
+    """파이썬 실행 캐시는 하네스 변경이 아니다. .gitignore 에 없던 옛 하네스에서도 막지 않게 거른다."""
+    # git() 이 출력 앞 공백을 잘라 첫 줄의 상태 칸 폭이 달라질 수 있어 줄 전체로 본다.
+    path = line.rstrip().rstrip('"')
+    return "__pycache__/" in path or path.endswith("__pycache__") or path.endswith(".pyc")
+
+
 def stop(root, data):
     if data.get("stop_hook_active"):
         sys.exit(0)
-    _, dirty, _ = git(root, "status", "--porcelain")
+    # 추적 안 된 폴더를 파일 단위로 펼쳐야 __pycache__ 만 든 폴더를 거를 수 있다
+    _, dirty, _ = git(root, "status", "--porcelain", "--untracked-files=all")
+    dirty = "\n".join(l for l in dirty.splitlines() if not is_bytecode_cache(l))
     ahead = ""
     up = upstream(root)
     if up and not linked_worktree(root):

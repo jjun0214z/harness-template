@@ -95,6 +95,18 @@ class GeneratedHooks(unittest.TestCase):
         r = subprocess.run([sys.executable, str(sync)], input=json.dumps({"hook_event_name": "SessionStart", "cwd": str(wt)}),
                            capture_output=True, text=True, env=self.sb.env(CLAUDE_PROJECT_DIR=str(wt)))
         self.assertEqual((r.returncode, r.stdout.strip()), (0, ""))
+        # Stop: 파이썬 실행 캐시만 생긴 것은 변경이 아니다(.gitignore 가 없던 옛 하네스에서도)
+        # 옛 하네스 흉내: .gitignore 를 비우고 그 수정 자체는 git 이 안 보게 한다
+        (wt / ".gitignore").write_text("", encoding="utf-8")
+        subprocess.run(["git", "-C", str(wt), "update-index", "--assume-unchanged", ".gitignore"], check=True, env=env)
+        cache = wt / "harness" / "scripts" / "__pycache__"
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "harnesslib.cpython-312.pyc").write_bytes(b"x")
+        r = subprocess.run([sys.executable, str(sync)], input=json.dumps({"hook_event_name": "Stop", "cwd": str(wt)}),
+                           capture_output=True, text=True, env=self.sb.env(CLAUDE_PROJECT_DIR=str(wt)))
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, ""), r.stdout)
+        subprocess.run(["git", "-C", str(wt), "update-index", "--no-assume-unchanged", ".gitignore"], check=True, env=env)
+        subprocess.run(["git", "-C", str(wt), "checkout", "-q", "--", ".gitignore"], check=True, env=env)
         # Stop: 커밋 안 된 변경이 있으면 막는다
         (wt / "메모.txt").write_text("x", encoding="utf-8")
         r = subprocess.run([sys.executable, str(sync)], input=json.dumps({"hook_event_name": "Stop", "cwd": str(wt)}),

@@ -34,6 +34,7 @@ from typing import Callable, List, Optional, Tuple
 import urllib.request
 
 HERE = Path(__file__).resolve().parent
+sys.dont_write_bytecode = True  # 형제 모듈 import 가 __pycache__ 를 하네스 저장소에 남기지 않게 한다
 sys.path.insert(0, str(HERE))
 import harnesslib as hl  # noqa: E402
 import generate as gen  # noqa: E402

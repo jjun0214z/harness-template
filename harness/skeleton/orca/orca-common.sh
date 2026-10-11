@@ -2,6 +2,7 @@
 # Orca 스크립트 공통: orca 실행 파일 찾기 · harness.json 읽기. 다른 orca-*.sh 가 source 한다.
 # 경로를 고정하지 않는다: ORCA_BIN → PATH 의 orca → 운영체제별 기본 설치 자리 순서.
 HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONDONTWRITEBYTECODE=1  # 파이썬 실행 캐시(__pycache__)를 저장소에 남기지 않는다
 PY="${HARNESS_PYTHON:-$(command -v python3 || command -v python || echo python3)}"
 find_orca() {
   if [ -n "${ORCA_BIN:-}" ]; then echo "$ORCA_BIN"; return; fi

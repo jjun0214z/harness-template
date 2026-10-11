@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 
+sys.dont_write_bytecode = True  # 형제 모듈 import 가 __pycache__ 를 하네스 저장소에 남기지 않게 한다
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harnesslib as hl  # noqa: E402
 
