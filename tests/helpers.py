@@ -91,7 +91,12 @@ class Sandbox:
         env.update(HOME=str(self.home), USERPROFILE=str(self.home), PATH=path, HARNESS_PATH_ONLY="1",
                    FAKE_TOOL_LOG=str(self.log), GIT_CONFIG_NOSYSTEM="1",
                    GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
-                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com",
+                   # 임시 찌꺼기 정리가 진짜 /tmp · 크롬 복제본을 보지 않게(실제 실행 시험이 진짜 파일을 지우면 안 된다)
+                   HARNESS_TMP_ROOT=os.path.join(os.path.realpath(self.tmp), "junk-tmp"),
+                   HARNESS_CLAUDE_TMP_ROOT=os.path.join(os.path.realpath(self.tmp), "claude-1"),
+                   HARNESS_CHROME_CLONE_GLOB=str(self.tmp / "X" / "code_sign_clone" / "code_sign_clone.*"),
+                   HARNESS_SIZE_ONLY_OFF="1")
         env.update(extra)
         return env
 

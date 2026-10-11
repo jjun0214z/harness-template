@@ -7,6 +7,8 @@
   3. 커밋 안 된 변경이 없다
   4. 그 작업 공간의 커밋이 원격(origin)의 어느 브랜치에든 전부 들어가 있다
 하나라도 어긋나면 지우지 않고 이유를 적는다. Orca 작업 폴더 아래 것은 Orca 에서 지우라고만 안내한다.
+끝에 임시 찌꺼기도 본다(cleanup_temp.py): 지운 · 없어진 작업 공간의 Claude 임시 폴더, 크롬 복제본, /tmp 검수 찌꺼기.
+미리보기가 찌꺼기 목록 · 합계를 계획에 적고 --apply 는 그 계획 안에서만 지운다(Windows 는 건너뛴다).
 
 사용: python3 harness/scripts/cleanup_worktrees.py            (미리보기)
       python3 harness/scripts/cleanup_worktrees.py --apply    (실제로 지움)
@@ -23,6 +25,7 @@ import time
 sys.dont_write_bytecode = True  # 형제 모듈 import 가 __pycache__ 를 하네스 저장소에 남기지 않게 한다
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harnesslib as hl  # noqa: E402
+import cleanup_temp as ct  # noqa: E402
 
 
 def git(repo, *args, check=False):
@@ -69,14 +72,22 @@ def main(argv=None):
     recent = int(os.environ.get("RECENT_MIN", "120"))
     orca_ws = os.path.realpath(os.path.expanduser(cfg["orca"]["workspaces_dir"])) + os.sep
     removed = kept = scanned = 0
+    gone: list = []
+    existing: list | None = []
     for d, repo in [(cfg["harness_repo"]["dir"], args.root)] + [(r["dir"], hl.repo_path(r, parent)) for r in cfg["repos"]]:
         if not (repo / ".git").exists():
             print(f"건너뜀 [{d}] 저장소가 없다: {repo}")
+            existing = None  # 그 저장소의 워크트리를 모르니 고아 판정을 하지 않는다
             continue
         scanned += 1
         git(repo, "fetch", "--quiet", "--prune", "origin")
         _, main_path = git(repo, "rev-parse", "--show-toplevel")
+        code, _ = git(repo, "worktree", "list", "--porcelain")
+        if code != 0:
+            existing = None  # 하나라도 못 읽으면 「없어진 작업 공간」을 판정하지 않는다
         for wt in worktrees(repo):
+            if existing is not None:
+                existing.append(wt["path"])
             path, branch = wt["path"], wt["branch"]
             if os.path.realpath(path) == os.path.realpath(main_path):
                 continue
@@ -101,11 +112,19 @@ def main(argv=None):
             if (os.path.realpath(path) + os.sep).startswith(orca_ws):
                 print(f"Orca {label} : 원격에 다 있음 → Orca 에서 지운다"); kept += 1; continue
             print(f"지움 {label} : 원격에 다 있음")
+            gone.append(path)
             if args.apply:
                 code, _ = git(repo, "worktree", "remove", path)
                 if code == 0 and branch:
                     git(repo, "branch", "-D", branch)
             removed += 1
+    if os.name != "nt":
+        print("--- 임시 찌꺼기 ---")
+        if gone:
+            ct.claude_tmp(gone, args.apply)
+        roots = [orca_ws.rstrip(os.sep), str(parent / ".work")]
+        ct.sweep(args.apply, [os.path.basename(p) for p in gone], roots, existing)
+        ct.chrome_clones(args.apply)
     mode = "적용" if args.apply else "미리보기 (지우려면 --apply)"
     print(f"완료 [{mode}]: 저장소 {scanned} · 정리 {removed} · 남김 {kept}")
     return 0

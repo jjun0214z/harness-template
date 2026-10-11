@@ -13,6 +13,8 @@
 
 정리 순서: Claude 세션 정상 종료(SIGTERM, 기다림, 안 죽으면 멈추고 보고, SIGKILL 은 쓰지 않는다)
           → Codex 세션 보관(실패는 경고만) → (Orca) worker-release · worktree rm / (Orca 없음) git worktree remove
+워크트리를 지운 뒤 임시 찌꺼기도 치운다(cleanup_temp.py): 그 워크트리와 없어진 작업 공간의 Claude 임시 폴더, /tmp 검수 찌꺼기.
+  찌꺼기는 --dry-run 이 목록 · 합계를 계획에 적고 실제 실행은 그 계획 안에서만 지운다(Windows 는 건너뛴다).
 마지막 줄: 「앱 보관 대상(Claude): <작업 이름>」. Claude 원격 세션 목록의 보관은 스크립트로 못 하므로 deploy 스킬의 「앱 세션 정리」가 한다.
 
 사용: python3 harness/scripts/finish_worker.py <워크트리> [--dispatch <id>] [--name <작업 이름>] [--dry-run]
@@ -35,6 +37,7 @@ HERE = Path(__file__).resolve().parent
 sys.dont_write_bytecode = True  # 형제 모듈 import 가 __pycache__ 를 하네스 저장소에 남기지 않게 한다
 sys.path.insert(0, str(HERE))
 import harnesslib as hl  # noqa: E402
+import cleanup_temp as ct  # noqa: E402
 
 HARNESS_ROOT = HERE.parents[1]
 SETTLED = {"completed", "succeeded", "failed", "done", "settled", "cancelled", "canceled", "stopped", "released"}
@@ -379,6 +382,8 @@ def main(argv=None) -> int:
         if args.dry_run:
             print(f"[미리보기] 안전 조건 통과: {wt}")
             print(f"  끝낼 Claude 세션: {', '.join(str(s['pid']) for s in sessions) or '없음'} · 지울 워크트리: {wt}")
+            branch = git(wt, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+            sweep_temp(wt, cfg, False, finished_names(wt, branch))
             print(name)
             return 0
         with CleanupLock():
@@ -416,6 +421,49 @@ def wait_empty(wt: str, wait: float) -> List[int]:
     return left
 
 
+def finished_names(wt: str, branch: str) -> List[str]:
+    """끝난 작업 이름: /tmp 검수 찌꺼기 중 이 이름이 든 것은 24시간이 안 됐어도 치운다."""
+    return sorted({os.path.basename(wt), (branch or "").rsplit("/", 1)[-1]} - {"", "HEAD"})
+
+
+def all_worktrees(cfg: Optional[dict]) -> Optional[List[str]]:
+    """하네스 · 설정 저장소 전부의 지금 있는 워크트리 경로. 설정이 없거나 하나라도 못 읽으면 None."""
+    if not cfg:
+        return None
+    parent = hl.git_common_parent(HARNESS_ROOT) or HARNESS_ROOT.parent
+    paths: List[str] = []
+    for repo in [HARNESS_ROOT] + [hl.repo_path(r, parent) for r in cfg["repos"]]:
+        r = git(repo, "worktree", "list", "--porcelain")
+        if r.returncode != 0:
+            return None
+        paths += [line[len("worktree "):] for line in r.stdout.splitlines() if line.startswith("worktree ")]
+    return paths
+
+
+def sweep_temp(wt: str, cfg: Optional[dict], apply: bool, finished: List[str]) -> None:
+    """그 워크트리의 Claude 임시 폴더 → 없어진 작업 공간의 것 → /tmp 검수 찌꺼기. 실패는 경고만."""
+    if os.name == "nt":
+        return
+    try:
+        if apply:
+            ct.claude_tmp([wt], True)
+        else:
+            ct.claude_tmp_preview(wt)
+    except Exception as exc:
+        print(f"경고: Claude 임시 폴더를 보지 못했다({type(exc).__name__}: {exc})", file=sys.stderr)
+    roots = [os.path.realpath(os.path.expanduser(cfg["orca"]["workspaces_dir"]))] if cfg else []
+    parent = hl.git_common_parent(HARNESS_ROOT)
+    if parent:
+        roots.append(str(parent / ".work"))
+    try:
+        failed = ct.sweep(apply, finished, roots, all_worktrees(cfg))
+    except Exception as exc:  # 찌꺼기 정리가 실패해도 작업자 정리 결과는 바꾸지 않는다
+        print(f"경고: 임시 찌꺼기를 보지 못했다({type(exc).__name__}: {exc})", file=sys.stderr)
+        return
+    if failed:
+        print("경고: 임시 찌꺼기 일부를 남겼다(위 이유). 워크트리 정리는 끝났다.", file=sys.stderr)
+
+
 def remove(args, wt: str, cfg: Optional[dict], orca: Optional[str], name: str) -> int:
     warn = archive_codex(wt, cfg)
     if warn:
@@ -432,6 +480,7 @@ def remove(args, wt: str, cfg: Optional[dict], orca: Optional[str], name: str) -
         print(f"멈춤: 워크트리 지우기 실패: {(r.stderr or r.stdout).strip()[-200:]}", file=sys.stderr)
         return 1
     print(f"정리 완료: {wt}")
+    sweep_temp(wt, cfg, True, finished_names(wt, branch))
     print(name)
     return 0
 

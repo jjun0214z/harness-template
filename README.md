@@ -330,6 +330,17 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | Codex 세션 | `codex archive` 로 보관한다 |
 | Claude 앱 · 웹 · 폰의 원격 세션 목록 | 스크립트로 보관할 공개 방법이 없다. 아래 방법으로 사람이 정리한다 |
 
+워크트리를 지운 뒤 디스크를 잡아먹는 임시 찌꺼기도 치운다(macOS · Linux, `harness/scripts/cleanup_temp.py`). `cleanup_worktrees.py` 도 같다.
+
+| 찌꺼기 | 지우는 조건 |
+| --- | --- |
+| Claude 임시 폴더(`<tmp>/claude-<uid>/<경로 이름>`) | 그 워크트리가 지워졌거나 이미 없고, 거기서 도는 Claude 세션 · 프로세스가 없다 |
+| 크롬 임시 복제본(macOS) | 하루가 지났고, 도는 크롬이 뜬 무렵에 생긴 것이 아니고, 쓰는 프로세스가 없다 |
+| `/tmp` 검수 찌꺼기 | 내 것이고 24시간 넘게 안 쓰였거나 끝난 작업 이름이 들었다. 소켓 · git 저장소 · 쓰는 프로세스가 있으면 남긴다 |
+| 보고서 미디어(선택) | `cleanup_temp.py junk --media-dir <폴더>` 로 줄 때만. 7일 지난 그림 · 영상 · json, md 는 남긴다 |
+
+찌꺼기는 미리보기(`--dry-run` · 기본)가 목록 · 크기 합계를 계획에 적고, 실제 실행은 그 계획 안에서 다시 확인한 것만 지운다.
+
 <details><summary>원격 세션 목록 정리 방법</summary>
 
 - 오케스트레이터가 브라우저 도구로 claude.ai/code 를 열어, 링크가 `/code/<bridgeSessionId>` 인 오프라인 세션만 보관한다.
