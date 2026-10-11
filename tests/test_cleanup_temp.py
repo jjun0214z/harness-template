@@ -81,8 +81,8 @@ class CleanupTempTest(unittest.TestCase):
     # Claude 임시 폴더
     def test_name_rule_matches_claude_code(self) -> None:
         self.assertEqual(
-            cleanup_temp.claude_tmp_name("/home/me/orca/workspaces/한글/ep22-video"),
-            "-home-me-orca-workspaces----ep22-video",
+            cleanup_temp.claude_tmp_name("/home/me/orca/workspaces/한글/job-a"),
+            "-home-me-orca-workspaces----job-a",
         )
         self.assertEqual(
             cleanup_temp.claude_tmp_name("/home/me/orca/workspaces/harness/cleanup-temp"),
@@ -232,7 +232,7 @@ class CleanupTempTest(unittest.TestCase):
         self.assertTrue(clone.is_dir())
 
     def test_long_running_chrome_does_not_block_old_headless_clones(self) -> None:
-        """크롬을 며칠 켜 둬도 그 뒤 헤드리스 크롬이 남긴 하루 지난 복제본은 지운다(10-11 473개 남음)."""
+        """크롬을 며칠 켜 둬도 그 뒤 헤드리스 크롬이 남긴 하루 지난 복제본은 지운다(가장 먼저 뜬 크롬만 기준으로 삼으면 하나도 못 지운다)."""
         old = self.make_clone("code_sign_clone.EEE", old=True)
         born = os.stat(old).st_birthtime
         result = self.run_clean("chrome-clones", "--apply", chrome_start=born - 7 * 86400)
@@ -255,7 +255,7 @@ class CleanupTempTest(unittest.TestCase):
 
 
 class JunkTest(unittest.TestCase):
-    """/tmp 검수 찌꺼기 · 7일 지난 보고서 미디어: 미리보기 계획 안에서만 지운다 (2026-10-11)."""
+    """/tmp 검수 찌꺼기 · 7일 지난 보고서 미디어: 미리보기 계획 안에서만 지운다."""
 
     OLD = 946684800  # 2000-01-01
 
@@ -289,7 +289,7 @@ class JunkTest(unittest.TestCase):
         return subprocess.run([sys.executable, "-B", str(CLEAN), "junk", *args], env=env, capture_output=True, text=True)
 
     def test_dry_run_lists_total_and_deletes_nothing(self) -> None:
-        audit = self.old_tree(self.tmp / "hub-audit-1010", {"a.png": b"x" * 5000})
+        audit = self.old_tree(self.tmp / "old-audit-run", {"a.png": b"x" * 5000})
         result = self.run_junk()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(f"tmp 찌꺼기 : {audit}", result.stdout)
@@ -317,9 +317,9 @@ class JunkTest(unittest.TestCase):
         recent = self.tmp / "fresh-check"
         recent.mkdir()
         (recent / "a.png").write_bytes(b"x")
-        linked = self.tmp / "hub-perf-companion-f5"
+        linked = self.tmp / "check-feature-b"
         linked.mkdir()
-        self.run_junk("companion-f5")
+        self.run_junk("feature-b")
         self.run_junk("--apply")
         self.assertTrue(recent.is_dir())
         self.assertFalse(linked.exists())
@@ -352,12 +352,12 @@ class JunkTest(unittest.TestCase):
         self.assertTrue(tool.is_dir())
 
     def test_reports_keep_md_and_recent_media(self) -> None:
-        folder = self.reports / "B-album-20261001"
+        folder = self.reports / "run-a"
         self.old_tree(folder, {"shot.png": b"x" * 100, "clip.mp4": b"x", "data.json": b"{}", "보고서.md": b"# r"})
         recent = folder / "today.png"
         recent.write_bytes(b"x")
         result = self.run_junk()
-        self.assertIn("보고서 미디어 · B-album-20261001 : 3개", result.stdout)
+        self.assertIn("보고서 미디어 · run-a : 3개", result.stdout)
         self.run_junk("--apply")
         self.assertTrue((folder / "보고서.md").is_file())
         self.assertTrue(recent.is_file())

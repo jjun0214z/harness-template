@@ -234,7 +234,7 @@ def codex_home_dir() -> Path:
 def open_binder_stderr(codex_home: Path) -> int | None:
     """바인더 stderr 를 받을 0600 파일. 못 열면 None(DEVNULL 로 버린다).
 
-    10-09 뒤 Orca Codex 세션에서 바인더 로그가 한 줄도 안 남았다. 죽는 이유를 남기려고 버리지 않는다.
+    바인더는 백그라운드에서 돌아 조용히 죽으면 흔적이 없다. 죽는 이유를 남기려고 버리지 않는다.
     """
     path = bind_log_path(codex_home).with_suffix(".stderr.log")
     try:

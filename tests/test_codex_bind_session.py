@@ -520,7 +520,7 @@ class HookRobustnessTest(unittest.TestCase):
         self.assertEqual(code, 0)
 
     def test_spawn_logs_pid_and_keeps_stderr(self) -> None:
-        """바인더가 로그 없이 사라졌던 일(10-09~10-10)을 다시 진단할 수 있게 띄운 기록과 stderr 를 남긴다."""
+        """바인더가 로그 없이 사라져도 진단할 수 있게 띄운 기록과 stderr 를 남긴다."""
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "logs" / "bind.log"
             popen_kwargs: dict = {}
