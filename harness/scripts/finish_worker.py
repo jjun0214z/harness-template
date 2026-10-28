@@ -650,8 +650,9 @@ def all_worktrees(cfg: Optional[dict]) -> Optional[List[str]]:
 
 
 def sweep_temp(wt: str, cfg: Optional[dict], apply: bool, finished: List[str]) -> None:
-    """그 워크트리의 Claude 임시 폴더 → 없어진 작업 공간의 것 → /tmp 검수 찌꺼기. 실패는 경고만."""
-    if os.name == "nt":
+    """그 워크트리의 Claude 임시 폴더 → 없어진 작업 공간의 것 → /tmp 검수 찌꺼기. 실패는 경고만.
+    cleanup 묶음을 켰을 때만 돈다(harness.json packs)."""
+    if os.name == "nt" or not hl.has_pack(cfg, "cleanup"):
         return
     try:
         if apply:

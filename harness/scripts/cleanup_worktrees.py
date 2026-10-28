@@ -118,7 +118,7 @@ def main(argv=None):
                 if code == 0 and branch:
                     git(repo, "branch", "-D", branch)
             removed += 1
-    if os.name != "nt":
+    if os.name != "nt" and hl.has_pack(cfg, "cleanup"):  # cleanup 묶음을 켰을 때만
         print("--- 임시 찌꺼기 ---")
         if gone:
             ct.claude_tmp(gone, args.apply)

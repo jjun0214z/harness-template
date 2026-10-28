@@ -306,6 +306,9 @@ def interview(kind: str, reader: Callable[[str], str] = input, default_root=None
     cfg["engines"] = {"1": ["claude"], "2": ["codex"], "3": ["claude", "codex"]}.get(choice, ["claude"])
     note = " (Windows: Orca 앱은 공식 지원, 이 하네스의 Orca 스크립트는 Git Bash 필요)" if kind == "windows" else ""
     cfg["runner"] = runners.from_choice(ask(runners.QUESTION + note, "1", reader))
+    say("선택 묶음 (고른 것만 붙는다. Enter = 넣지 않음)")
+    cfg["packs"] = [k for k in hl.PACKS if (k != "codex-desktop" or "codex" in cfg["engines"])
+                    and ask_yes(f"  {k}: {hl.PACK_INFO[k]}", False, reader, on_eof=False)]
     return hl.normalize(cfg)
 
 
@@ -313,7 +316,9 @@ def interview(kind: str, reader: Callable[[str], str] = input, default_root=None
 
 def needed_tools(cfg: dict) -> List[str]:
     tools = ["git"]
-    node_needed = bool(cfg["engines"]) or any("node" in hl.STACKS[r["stack"]][0] for r in cfg["repos"])
+    # node 는 쓸 때만: codex(npm 설치) · node 스택 · pnpm. claude 는 네이티브 설치기라 필요 없다
+    node_needed = ("codex" in cfg["engines"] or any("node" in hl.STACKS[r["stack"]][0] for r in cfg["repos"])
+                   or any("pnpm" in c for r in cfg["repos"] for c in r["checks"]))
     if node_needed:
         tools.append("node")
     if any("pnpm" in hl.STACKS[r["stack"]][0] for r in cfg["repos"]) or any("pnpm" in c for r in cfg["repos"] for c in r["checks"]):
@@ -375,9 +380,8 @@ def plan_tools(cfg: dict, kind: str) -> List[dict]:
             row.update(action="올림" if cmd else "안내", cmd=cmd, hint=hint)
         else:
             cmd, hint = hl.install_command(tool, kind, have)
-            if cmd is None and tool in ("claude", "codex", "pnpm") and node_coming:
-                cmd, hint = [AFTER_NODE], "node 설치 뒤 npm install -g " + {"claude": "@anthropic-ai/claude-code",
-                                                                       "codex": "@openai/codex", "pnpm": "pnpm"}[tool]
+            if cmd is None and tool in ("codex", "pnpm") and node_coming:
+                cmd, hint = [AFTER_NODE], "node 설치 뒤 npm install -g " + {"codex": "@openai/codex", "pnpm": "pnpm"}[tool]
             action = "설치" if cmd else "안내"
             row.update(action=action, cmd=cmd, hint=hint)
         if tool == "node" and row["action"] in INSTALLING:
@@ -1345,7 +1349,7 @@ def cmd_check(args) -> int:
     except hl.ConfigError as exc:
         hl.eprint(exc)
         return 2
-    say(f"설정 통과: {cfg['project']['name']} · 저장소 {len(cfg['repos'])} · 엔진 {', '.join(cfg['engines'])} · 작업자 {runners.label(cfg)}")
+    say(f"설정 통과: {cfg['project']['name']} · 저장소 {len(cfg['repos'])} · 엔진 {', '.join(cfg['engines'])} · 작업자 {runners.label(cfg)} · 묶음 {', '.join(cfg['packs']) or '없음'}")
     return 0
 
 

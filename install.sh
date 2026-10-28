@@ -4,9 +4,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.sh | bash
 #   (옵션을 줄 때) curl -fsSL .../install.sh | bash -s -- --yes
 #
-# 순서: OS 판정 → 감지 표(도구 · 찾은 버전 · 할 일) → 한 번 동의 → 패키지 관리자 · git · python3 · node 22
+# 순서: OS 판정 → 감지 표(도구 · 찾은 버전 · 할 일) → 한 번 동의 → 패키지 관리자 · git · python3
 #       → 템플릿 받기(git clone, git 이 없으면 tar.gz) · 이미 있으면 갱신 → bootstrap.py 실행
-# 이미 있는 도구는 건너뛰고, 모자란 버전은 쓰던 관리자(nvm · fnm)로 올린다. 기존 설치는 지우지 않는다.
+# 이미 있는 도구는 건너뛴다. 기존 설치는 지우지 않는다.
+# node 는 여기서 깔지 않는다: 고른 엔진 · 스택이 필요로 할 때만 bootstrap 의 도구 표가 깐다(쓰던 nvm · fnm 이 있으면 그것으로).
 #
 # 옵션: --yes(무인 동의) · --dry-run(할 일만 출력) · --no-run(받기까지만) · --dir <폴더>(템플릿 원본, 기본 ~/.harness-template)
 # 프로젝트는 이 명령을 실행한 폴더 아래 <프로젝트 슬러그>/ 에 만든다(bootstrap 의 --root 로 바꿀 수 있다).
@@ -27,7 +28,6 @@ export HARNESS_CALLER_CWD="${HARNESS_CALLER_CWD:-$PWD}"
 if [ -n "${HARNESS_DIR:-}" ]; then DIR="$HARNESS_DIR"
 elif [ -d "$HOME/harness-template/.git" ] || [ -f "$HOME/harness-template/.harness-template" ]; then DIR="$HOME/harness-template"; LEGACY=1
 else DIR="$HOME/.harness-template"; fi
-NODE_MAJOR=22
 YES=0; DRY=0; NORUN=0
 BOOT_ARGS=()
 while [ $# -gt 0 ]; do
@@ -121,9 +121,6 @@ for c in python3 python; do
   if have "$c" && "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then PY="$c"; break; fi
 done
 py_ver() { [ -n "$PY" ] && "$PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])'; }
-node_ver() { have node && node --version 2>/dev/null; }
-node_major() { v="$(node_ver)"; v="${v#v}"; printf '%s' "${v%%.*}"; }
-NVM_SH="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
 BREW=""
 BREW_CANDIDATES="brew /opt/homebrew/bin/brew /usr/local/bin/brew /home/linuxbrew/.linuxbrew/bin/brew"
 [ "${HARNESS_PATH_ONLY:-0}" = 1 ] && BREW_CANDIDATES="brew"   # 시험: PATH 밖의 실제 brew 를 보지 않는다
@@ -162,16 +159,6 @@ if [ -n "$PY" ]; then add "python" "$(py_ver)" "건너뜀" "-"
 else c="$(brew_or_pkg python@3.12 python3)"; add "python" "없음(3.9 이상 필요)" "$([ -n "$c" ] && echo 설치 || echo 안내)" "${c:-python 3.9 이상을 직접 설치한다}"; fi
 if [ "$OS" = linux ] && ! have curl && ! have wget; then
   c="$(brew_or_pkg curl curl)"; add "curl" "없음" "$([ -n "$c" ] && echo 설치 || echo 안내)" "${c:-curl 을 직접 설치한다}"
-fi
-nm="$(node_major)"
-if [ -n "$nm" ] && [ "$nm" -ge "$NODE_MAJOR" ] 2>/dev/null; then add "node" "$(node_ver)" "건너뜀" "-"
-else
-  act=설치; [ -n "$nm" ] && act=올림
-  found="$( [ -n "$nm" ] && node_ver || echo 없음)"
-  if [ -f "$NVM_SH" ]; then add "node" "$found" "$act" "nvm install $NODE_MAJOR"
-  elif have fnm; then add "node" "$found" "$act" "fnm install $NODE_MAJOR && fnm default $NODE_MAJOR"
-  elif [ "$OS" = mac ]; then add "node" "$found" "$act" "brew install node@$NODE_MAJOR"
-  else add "node" "$found" "$act" "nvm 설치(https://github.com/nvm-sh/nvm) 뒤 nvm install $NODE_MAJOR"; fi
 fi
 if [ -d "$DIR/.git" ] || [ -f "$DIR/.harness-template" ]; then add "템플릿" "$DIR" "갱신" "-"
 else add "템플릿" "없음" "받기" "$DIR"; fi
@@ -245,16 +232,6 @@ EOF
     case "$t|$a" in
       "apt 목록|갱신") run "$c" >/dev/null || { say "apt 목록 갱신 실패"; exit 3; } ;;
       "git|설치"|"python|설치"|"curl|설치") case "$c" in brew*|*apt-get*|*dnf*) run "$c" || { say "$t 설치 실패: $c"; exit 3; } ;; esac ;;
-      "node|설치"|"node|올림")
-        ok=1
-        if [ -f "$NVM_SH" ]; then . "$NVM_SH" && nvm install "$NODE_MAJOR" && nvm alias default "$NODE_MAJOR" >/dev/null || ok=0
-        elif have fnm; then { fnm install "$NODE_MAJOR" && fnm default "$NODE_MAJOR"; } || ok=0; eval "$(fnm env 2>/dev/null)"
-        elif [ "$OS" = mac ]; then { run "brew install node@$NODE_MAJOR" && PATH="$("$BREW" --prefix "node@$NODE_MAJOR")/bin:$PATH"; } || ok=0
-        else
-          { run 'curl -fsSL -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash' \
-            && export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh" && nvm install "$NODE_MAJOR"; } || ok=0
-        fi
-        [ "$ok" = 1 ] || say "node $NODE_MAJOR 준비 실패. 하네스 셋업은 계속하고 doctor 가 다시 알려 준다" ;;
     esac
   done
   hash -r 2>/dev/null

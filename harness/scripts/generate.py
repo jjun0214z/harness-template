@@ -571,23 +571,28 @@ def hook_cmd(py: str, script: str) -> str:
     return f'{py} "${{PLUGIN_ROOT:-${{CLAUDE_PLUGIN_ROOT}}}}/scripts/{script}"'
 
 
+def codex_desktop(cfg: dict) -> bool:
+    """codex-desktop 묶음: Codex 를 골랐고 묶음을 켰을 때만 데스크톱 앱 귀속 · 세션 보관 스크립트를 싣는다."""
+    return hl.has(cfg, "codex") and hl.has_pack(cfg, "codex-desktop")
+
+
 def plugin_hooks(cfg: dict) -> dict:
     py = cfg["platform"]["python"]
     start = [{"type": "command", "command": hook_cmd(py, "core-context.py")}]
-    if hl.has(cfg, "codex"):
+    if codex_desktop(cfg):
         start.append({"type": "command", "command": hook_cmd(py, "codex-bind-session.py")})
     hooks = {
         "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": hook_cmd(py, "guard-push.py")}]}],
         "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": start}],
     }
-    if hl.has(cfg, "codex") and runners.is_orca(cfg):
+    if codex_desktop(cfg) and runners.is_orca(cfg):
         hooks["SessionEnd"] = [{"hooks": [{"type": "command", "command": hook_cmd(py, "archive-codex-session.py")}]}]
     return {"hooks": hooks}
 
 
 def plugin_scripts(cfg: dict) -> List[str]:
     names = ["guard-push.py", "shellwords.py", "core-context.py"]
-    if hl.has(cfg, "codex"):
+    if codex_desktop(cfg):
         names += ["codex-bind-session.py", "codex_project_binding.py"]
         if runners.is_orca(cfg):
             names.append("archive-codex-session.py")

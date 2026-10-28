@@ -60,15 +60,30 @@ class InstallCommands(unittest.TestCase):
         self.assertIn("winget", hint)
 
     def test_linux_is_guidance_only(self):
-        for tool in ("git", "gh", "node", "python"):
+        for tool in ("git", "gh", "python"):
             cmd, hint = hl.install_command(tool, "linux", lambda n: True)
             self.assertIsNone(cmd, tool)
             self.assertTrue(hint)
 
-    def test_agent_cli_via_npm_on_every_os(self):
+    def test_linux_node_via_nvm_when_curl(self):
+        cmd, _ = hl.install_command("node", "linux", lambda n: n == "curl")
+        self.assertEqual(cmd[:2], ["bash", "-c"])
+        self.assertIn("nvm install 22", cmd[2])
+        cmd, hint = hl.install_command("node", "linux", lambda n: False)
+        self.assertIsNone(cmd)
+        self.assertIn("nvm", hint)
+
+    def test_claude_uses_native_installer_without_node(self):
+        """claude 는 node 가 없어도 깔린다(공식 네이티브 설치기). npm 이 있어도 npm 으로 깔지 않는다."""
+        for kind in ("mac", "linux"):
+            cmd, _ = hl.install_command("claude", kind, lambda n: n in ("curl", "npm"))
+            self.assertEqual(cmd, ["bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"])
+        cmd, _ = hl.install_command("claude", "windows", lambda n: False)
+        self.assertEqual(cmd[0], "powershell")
+        self.assertIn("irm https://claude.ai/install.ps1 | iex", cmd[-1])
+
+    def test_codex_via_npm_on_every_os(self):
         for kind in ("mac", "windows", "linux"):
-            cmd, _ = hl.install_command("claude", kind, lambda n: n == "npm")
-            self.assertEqual(cmd, ["npm", "install", "-g", "@anthropic-ai/claude-code"])
             cmd, _ = hl.install_command("codex", kind, lambda n: n == "npm")
             self.assertEqual(cmd, ["npm", "install", "-g", "@openai/codex"])
             cmd, hint = hl.install_command("codex", kind, lambda n: False)

@@ -111,7 +111,7 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | 단계 | 누가 | 무엇 |
 | --- | --- | --- |
 | 1 | `install.sh` · `install.ps1` (파이썬보다 먼저 도는 셸) | 감지 표 → 동의 → 도구 설치 → 템플릿 원본 받기 |
-| 2 | `bootstrap.py run` | 질문 → 도구 표 · 동의(pnpm · 고른 엔진 CLI) → 로그인 확인 |
+| 2 | `bootstrap.py run` | 질문 → 도구 표 · 동의(고른 엔진 CLI · 필요할 때만 node · pnpm · Orca) → 로그인 확인 |
 | 3 | 〃 | 하네스 저장소와 코드 저장소를 **새로 만든다**(`git init -b <기준 브랜치>` · 최소 뼈대 · 첫 커밋) |
 | 4 | 〃 | 생성기 → 고른 엔진만 플러그인 설치 → (gh 로그인이 있고 원하면) 비공개 원격 저장소 · 라벨 → Orca 를 골랐으면 등록 |
 | 5 | 〃 | doctor 점검 표 + **나중에 할 일**(사람 손이 필요한 것. 같은 원인은 한 줄로 모은다) |
@@ -120,7 +120,7 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 
 **1단계가 챙기는 것**
 
-- 패키지 관리자 · git · python 3.9+ · node 22. 운영체제별로 무엇을 쓰는지는 [운영체제별 차이](#-운영체제별-차이).
+- 패키지 관리자 · git · python 3.9+ 만. node 는 여기서 깔지 않고, Codex · node 스택 · pnpm 을 고른 경우에만 2단계 도구 표에 나온다(Claude 는 공식 네이티브 설치기라 node 가 필요 없다). 운영체제별로 무엇을 쓰는지는 [운영체제별 차이](#-운영체제별-차이).
 - 템플릿 원본을 `~/.harness-template` 에 받는다. git 이 없으면 압축으로, 있으면 갱신한다.
 - 예전 자리 `~/harness-template` 이 있으면 그것을 그대로 쓴다.
 
@@ -167,6 +167,7 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | `plugins/<슬러그>/skills/` | 규칙 스킬(아래 목록) | **없을 때만 만든다.** 단 관리 블록은 다시 맞춘다 |
 | `.claude/settings.json` · `.claude-plugin/marketplace.json` | Claude 를 골랐을 때 | 설정대로 |
 | `.codex/hooks.json` · `.codex/agents/*.toml` · `.agents/plugins/marketplace.json` | Codex 를 골랐을 때 | 설정대로 |
+| 플러그인 `scripts/codex-*.py` | Codex + `codex-desktop` 묶음을 골랐을 때 | 설정대로 |
 | `scripts/orca-*.sh` | Orca 를 골랐을 때(bash) | 설정대로 |
 | `harness/` | 셋업 엔진 · 생성기 · 저장소 훅(규칙 보호 · 하네스 동기화 · 고친 뒤 할 일 알림) · 작업 공간 정리 | `update` 로 템플릿에서 |
 | `README.md` | 설치한 사람용 안내 한 장(「하고 싶은 것 → 이렇게 말한다」) | 없을 때만 |
@@ -238,7 +239,8 @@ push 가드와 규칙 보호는 같은 명령 해석기(`shellwords.py`)를 쓴�
     {"key": "admin", "source": "local", "path": "~/code/admin", "connect_files": true}
   ],
   "engines": ["claude", "codex"],
-  "runner": "subagent"
+  "runner": "subagent",
+  "packs": []
 }
 ```
 
@@ -254,6 +256,13 @@ push 가드와 규칙 보호는 같은 명령 해석기(`shellwords.py`)를 쓴�
 - `source: local` 은 폴더 이름 · 기본 브랜치 · 원격을 그 저장소에서 읽는다.
 - `connect_files: true` 일 때만 없는 `CLAUDE.md` · `AGENTS.md` · `.claude/settings.json` 을 더한다.
 - 빈 저장소라 의존성(pnpm install 등)은 설치하지 않는다.
+- `packs` 는 고른 것만 붙는 선택 묶음이다. 칸이 아예 없던 옛 설정은 예전처럼 전부 켠 것으로 읽고, 생성기가 그렇게 적어 둔다(갱신으로 동작이 바뀌지 않게).
+
+| 묶음 | 켜면 |
+| --- | --- |
+| `cleanup` | 작업 정리 때 임시 찌꺼기(Claude 임시 폴더 · 크롬 복제본 · `/tmp` 검수 찌꺼기)도 지운다. macOS · Linux |
+| `codex-desktop` | Codex 세션을 데스크톱 앱 프로젝트에 귀속하고 끝난 Codex 세션을 보관한다. Codex 를 고른 경우 |
+
 - 전체 예시는 `examples/harness.example.json`.
 - 설정만 있으면 `./bootstrap.sh run --config harness.json --yes --non-interactive`.
 
@@ -342,11 +351,11 @@ push 가드와 규칙 보호는 같은 명령 해석기(`shellwords.py`)를 쓴�
 | 어디 | 어떻게 |
 | --- | --- |
 | Claude 세션 | 정상 종료만 한다(안 끝나면 멈추고 보고) |
-| Codex 세션 | `codex archive` 로 보관한다. 데스크톱 앱 「최근」에는 남을 수 있어 출력의 `앱 보관 대상(Codex)` 줄을 보고 앱에서 보관한다 |
+| Codex 세션 | (`codex-desktop` 묶음) `codex archive` 로 보관한다. 데스크톱 앱 「최근」에는 남을 수 있어 출력의 `앱 보관 대상(Codex)` 줄을 보고 앱에서 보관한다 |
 | Claude 앱 · 웹 · 폰의 원격 세션 목록 | 스크립트로 보관할 공개 방법이 없다. 아래 방법으로 사람이 정리한다 |
 | 작업자가 띄워 두고 간 프로세스 | 개발 서버 · adb 같은 알려진 도구와 그 작업 전용 검수 크롬은 끈다. 에이전트 · 셸 · 모르는 프로세스 · 사용자 크롬 · crashpad 는 끄지 않고 멈춘다 |
 
-워크트리를 지운 뒤 디스크를 잡아먹는 임시 찌꺼기도 치운다(macOS · Linux, `harness/scripts/cleanup_temp.py`). `cleanup_worktrees.py` 도 같다.
+`cleanup` 묶음을 켰으면 워크트리를 지운 뒤 디스크를 잡아먹는 임시 찌꺼기도 치운다(macOS · Linux, `harness/scripts/cleanup_temp.py`). `cleanup_worktrees.py` 도 같다. 묶음을 켜지 않으면 워크트리만 지운다.
 
 | 찌꺼기 | 지우는 조건 |
 | --- | --- |
@@ -373,7 +382,8 @@ push 가드와 규칙 보호는 같은 명령 해석기(`shellwords.py`)를 쓴�
 | --- | --- | --- | --- |
 | 한 줄 설치 | `install.sh` | `install.sh` | `install.ps1` (Git Bash 에서 부른 `install.sh` 는 자동으로 이것으로 넘긴다) |
 | 패키지 관리자 | 개발자 도구(`xcode-select --install`) + brew | apt · dnf (sudo) | winget (없으면 App Installer 안내) |
-| node 22 | 쓰던 nvm · fnm, 없으면 brew `node@22` | 쓰던 nvm · fnm, 없으면 nvm 설치 | 쓰던 nvm-windows · fnm, 없으면 winget |
+| node 22 (필요할 때만) | 쓰던 nvm · fnm, 없으면 brew `node@22` | 쓰던 nvm · fnm, 없으면 curl 로 nvm 설치 | 쓰던 nvm-windows · fnm, 없으면 winget |
+| Claude CLI | `curl -fsSL https://claude.ai/install.sh \| bash` | 같음 | `irm https://claude.ai/install.ps1 \| iex` |
 | 설치 뒤 PATH | 같은 셸에서 brew shellenv · node 경로를 올린다 | 같음 | 레지스트리에서 PATH 를 다시 읽는다 |
 | 훅 파이썬 | `python3` | `python3` | 찾은 것(`py -3` · `python`), 스토어 가짜 실행 파일은 건너뜀 |
 | 심링크 · 줄바꿈 | 쓰지 않는다(복사) · LF | 같음 | 같음(`.ps1` 만 CRLF) |

@@ -34,12 +34,22 @@ STACKS = {
 }
 MIN_PYTHON = (3, 9)
 MIN_NODE_MAJOR = 22
+# 공식 설치 경로(Claude Code 설치 문서 · nvm README). claude 네이티브 설치기는 ~/.local/bin/claude 에 둔다
+CLAUDE_INSTALL_SH = "https://claude.ai/install.sh"
+CLAUDE_INSTALL_PS1 = "https://claude.ai/install.ps1"
+NVM_INSTALL_SH = "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh"
 ENGINES = ("claude", "codex")
 DEFAULT_LABELS = ("결정대기", "진행중", "하네스", "규칙")
 # 규칙 스킬. 생성기가 주인인 것(내용이 상태 판정뿐이라 사람이 채울 자리가 없다) · 절차 뼈대(범용) · 채울 자리(프로젝트 내용) 세 종류.
 MANAGED_SKILLS = ("setup", "start")
 PROCEDURE_SKILLS = ("absolute-rules", "work-method", "git-rules", "deploy", "task-brief")
 FILL_SKILLS = ("code-convention", "security-privacy", "operations", "design")
+# 고른 것만 붙는 선택 묶음. 고르지 않으면 파일 · 훅 · 자동 동작이 생기지 않는다
+PACKS = ("cleanup", "codex-desktop")
+PACK_INFO = {
+    "cleanup": "작업 정리 때 임시 찌꺼기(Claude 임시 폴더 · 크롬 복제본 · /tmp 검수 찌꺼기)도 지운다 (macOS · Linux)",
+    "codex-desktop": "Codex 세션을 데스크톱 앱 프로젝트에 귀속 · 끝난 Codex 세션 보관 (Codex 를 고른 경우)",
+}
 # 하네스 저장소에서 조용히 흔들리면 안 되는 경로. guard-rules · guard-push 가 같이 쓴다.
 DEFAULT_PROTECTED = ("CLAUDE.md", "AGENTS.md", "harness.json", ".claude/", ".claude-plugin/",
                      ".codex/", ".agents/", "plugins/", "harness/")
@@ -73,6 +83,7 @@ def default_config() -> dict:
         "skills": {"fill": list(FILL_SKILLS)},
         "engines": ["claude"],
         "runner": runners.DEFAULT_RUNNER,
+        "packs": [],
         "orca": {"workspaces_dir": "~/orca/workspaces"},
         "labels": list(DEFAULT_LABELS),
         "platform": {"python": ""},
@@ -83,7 +94,7 @@ def default_config() -> dict:
 def normalize(raw: dict) -> dict:
     """빠진 칸을 기본값으로 채운 새 dict. 검증은 validate 가 한다."""
     cfg = default_config()
-    raw = runners.migrate(raw)  # 옛 orca.enabled → runner
+    raw = migrate_raw(raw)
     for key, value in raw.items():
         if isinstance(value, dict) and isinstance(cfg.get(key), dict):
             merged = dict(cfg[key])
@@ -190,6 +201,9 @@ def validate(cfg: dict) -> List[str]:
     fill = (cfg.get("skills") or {}).get("fill") or []
     if any(s not in FILL_SKILLS for s in fill):
         errs.append(f"skills.fill 은 {', '.join(FILL_SKILLS)} 중에서 고른다")
+    packs = cfg.get("packs")
+    if not isinstance(packs, list) or any(x not in PACKS for x in packs) or len(set(packs)) != len(packs):
+        errs.append(f"packs 는 {' · '.join(PACKS)} 중에서 고른 목록이다")
     if cfg.get("runner") not in runners.RUNNERS:
         errs.append(f"runner 는 {' · '.join(runners.RUNNERS)} 중 하나다")
     return errs
@@ -215,21 +229,30 @@ def load_config(path: Path) -> dict:
     return cfg
 
 
+def migrate_raw(raw: dict) -> dict:
+    """옛 설정을 지금 모양으로. orca.enabled → runner, packs 칸이 없던 설정 → 예전처럼 묶음 전부(동작을 바꾸지 않는다)."""
+    out = runners.migrate(raw)
+    if "packs" not in out:
+        out["packs"] = list(PACKS)
+    return out
+
+
 def migrate_config_file(path: Path) -> bool:
-    """옛 칸(orca.enabled)이 남은 설정 파일을 제자리에서 옮긴다. 다른 칸 · 순서는 그대로 둔다. 바꿨으면 True."""
+    """옛 칸(orca.enabled · packs 없음)이 남은 설정 파일을 제자리에서 옮긴다. 다른 칸 · 순서는 그대로 둔다. 바꿨으면 True."""
     try:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False  # 읽기 오류는 load_config 가 알린다
     if not isinstance(raw, dict):
         return False
-    new = runners.migrate(raw)
+    new = migrate_raw(raw)
     if new == raw:
         return False
-    if "runner" not in raw:  # 새 칸은 engines 바로 뒤에 둔다(사람이 읽기 좋게)
-        items = [(k, v) for k, v in new.items() if k != "runner"]
+    added = [k for k in ("runner", "packs") if k not in raw]
+    if added:  # 새 칸은 engines 바로 뒤에 둔다(사람이 읽기 좋게)
+        items = [(k, v) for k, v in new.items() if k not in added]
         at = next((i + 1 for i, (k, _) in enumerate(items) if k == "engines"), len(items))
-        new = dict(items[:at] + [("runner", new["runner"])] + items[at:])
+        new = dict(items[:at] + [(k, new[k]) for k in added] + items[at:])
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(dump_config(new))
     return True
@@ -280,6 +303,10 @@ def github_remote(path: Path) -> str:
 
 def repo_url(repo: dict) -> str:
     return repo.get("url") or f"https://github.com/{repo['remote']}.git"
+
+
+def has_pack(cfg: Optional[dict], name: str) -> bool:
+    return bool(cfg) and name in (cfg.get("packs") or [])
 
 
 def has(cfg: dict, engine: str) -> bool:
@@ -410,7 +437,7 @@ def tool_extra_paths(name: str, kind: str) -> List[Path]:
             paths.append(Path("/Applications/ChatGPT.app/Contents/Resources/codex"))
         return paths
     if name == "claude":
-        return [h / ".local" / "bin" / "claude", h / ".claude" / "local" / "claude"]
+        return [h / ".local" / "bin" / "claude", h / ".local" / "bin" / "claude.exe", h / ".claude" / "local" / "claude"]
     if name == "orca":
         paths = []
         if os.environ.get("ORCA_BIN"):
@@ -432,13 +459,25 @@ def tool_extra_paths(name: str, kind: str) -> List[Path]:
 def install_command(tool: str, kind: str, have: Callable[[str], bool]) -> Tuple[Optional[List[str]], str]:
     """(실행할 명령 | None, 사람에게 보일 안내). 명령이 None 이면 안내만 한다.
 
-    mac=brew, Windows=winget(없으면 안내), Linux=안내만. claude · codex CLI 는 npm 전역 설치(공식 방법 중 OS 공통).
+    mac=brew, Windows=winget(없으면 안내), Linux=안내만(node 는 curl 이 있으면 nvm).
+    claude 는 공식 네이티브 설치기(node 가 필요 없다), codex 는 npm 전역 설치.
     """
-    if tool in ("claude", "codex"):
-        pkg = "@anthropic-ai/claude-code" if tool == "claude" else "@openai/codex"
+    if tool == "claude":
+        if kind == "windows":
+            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", f"irm {CLAUDE_INSTALL_PS1} | iex"]
+            return cmd, f"irm {CLAUDE_INSTALL_PS1} | iex"
+        if have("curl"):
+            return ["bash", "-c", f"curl -fsSL {CLAUDE_INSTALL_SH} | bash"], f"curl -fsSL {CLAUDE_INSTALL_SH} | bash"
+        return None, f"curl 을 설치한 뒤 curl -fsSL {CLAUDE_INSTALL_SH} | bash"
+    if tool == "codex":
+        pkg = "@openai/codex"
         if have("npm"):
             return ["npm", "install", "-g", pkg], f"npm install -g {pkg}"
         return None, f"node {MIN_NODE_MAJOR} 을 먼저 설치한 뒤 npm install -g {pkg}"
+    if tool == "node" and kind == "linux" and have("curl"):
+        script = (f"curl -fsSL -o- {NVM_INSTALL_SH} | bash && export NVM_DIR=\"$HOME/.nvm\" "
+                  f"&& . \"$NVM_DIR/nvm.sh\" && nvm install {MIN_NODE_MAJOR}")
+        return ["bash", "-c", script], f"nvm 설치({NVM_INSTALL_SH}) 뒤 nvm install {MIN_NODE_MAJOR}"
     if tool == "orca":
         if kind == "mac" and have("brew"):
             return ["brew", "install", "--cask", ORCA_BREW_CASK], f"brew install --cask {ORCA_BREW_CASK}"

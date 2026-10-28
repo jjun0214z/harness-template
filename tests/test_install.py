@@ -56,12 +56,12 @@ class Install(unittest.TestCase):
         r = self.install("--dry-run")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         steps = [p.split(":")[0] for p in self.plan(r.stdout)]
-        self.assertEqual(steps, ["개발자 도구(CLT)", "brew", "python", "node", "템플릿", "bootstrap"])
+        self.assertEqual(steps, ["개발자 도구(CLT)", "brew", "python", "템플릿", "bootstrap"])  # node 는 bootstrap 이 필요할 때만
         joined = "\n".join(self.plan(r.stdout))
         self.assertIn("xcode-select --install", joined)
         self.assertIn("Homebrew/install", joined)
         self.assertIn("brew install python@3.12", joined)
-        self.assertIn("brew install node@22", joined)
+        self.assertNotIn("node", joined)
         self.assertIn("| git | 없음 | 함께 |", r.stdout)
 
     def test_empty_linux_apt_order(self):
@@ -71,12 +71,11 @@ class Install(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         plan = self.plan(r.stdout)
         # apt 로 설치할 것이 있을 때만 목록 갱신이 맨 앞에 들어간다(동의 표에도 보인다)
-        self.assertEqual([p.split(":")[0] for p in plan], ["apt 목록", "git", "python", "curl", "node", "템플릿", "bootstrap"])
+        self.assertEqual([p.split(":")[0] for p in plan], ["apt 목록", "git", "python", "curl", "템플릿", "bootstrap"])
         self.assertIn("apt-get update -y", plan[0])
         self.assertIn("| apt 목록 | - | 갱신 |", r.stdout)
         self.assertIn("apt-get install -y git", plan[1])
         self.assertIn("apt-get install -y python3", plan[2])
-        self.assertIn("nvm", plan[4])
 
     def test_linux_without_package_manager_is_guidance(self):
         r = self.install("--dry-run", os_name="linux")
@@ -96,8 +95,8 @@ class Install(unittest.TestCase):
         self.assertIn("| brew | 있음 | 건너뜀 |", r.stdout)
         self.assertRegex(r.stdout, r"\| git \| [0-9.]+[^|]* \| 건너뜀 \|")
         self.assertRegex(r.stdout, r"\| python \| 3\.\d+\.\d+ \| 건너뜀 \|")
-        self.assertIn("| node | v18.12.1 | 올림 | fnm install 22", r.stdout)
-        self.assertEqual([p.split(":")[0] for p in self.plan(r.stdout)], ["node", "템플릿", "bootstrap"])
+        self.assertNotIn("| node |", r.stdout, "node 는 설치기가 아니라 bootstrap 이 필요할 때만 다룬다")
+        self.assertEqual([p.split(":")[0] for p in self.plan(r.stdout)], ["템플릿", "bootstrap"])
 
     def test_no_consent_without_tty_or_yes(self):
         self.fake("xcode-select", "exit 2")

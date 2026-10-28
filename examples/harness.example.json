@@ -75,6 +75,10 @@
     "codex"
   ],
   "runner": "orca",
+  "packs": [
+    "cleanup",
+    "codex-desktop"
+  ],
   "orca": {
     "workspaces_dir": "~/orca/workspaces"
   },

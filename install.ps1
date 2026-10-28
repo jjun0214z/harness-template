@@ -4,9 +4,9 @@
 #   (붙여 넣다 줄이 끊기면 두 줄로) $u = "https://raw.githubusercontent.com/jjun0214z/harness-template/main/install.ps1"  다음 줄  irm $u | iex
 #   (무인) $env:HARNESS_YES='1'; irm .../install.ps1 | iex
 #
-# 순서: 감지 표(도구 · 찾은 버전 · 할 일) → 한 번 동의 → winget 확인 · git · python · node 22
+# 순서: 감지 표(도구 · 찾은 버전 · 할 일) → 한 번 동의 → winget 확인 · git · python
 #       → 환경변수 PATH 다시 읽기 → 템플릿 받기(git clone, git 이 없으면 zip) · 이미 있으면 갱신 → bootstrap.py 실행
-# 이미 있는 것은 건너뛰고, node 가 모자라면 nvm-windows · fnm 이 있으면 그걸로 올린다. 기존 설치는 지우지 않는다.
+# 이미 있는 것은 건너뛴다. 기존 설치는 지우지 않는다. node 는 고른 엔진 · 스택이 필요로 할 때만 bootstrap 이 깐다.
 # 환경변수: HARNESS_YES=1(무인 동의) · HARNESS_DRY_RUN=1(할 일만 출력) · HARNESS_NO_RUN=1(받기까지만) · HARNESS_DIR · HARNESS_TEMPLATE_URL · HARNESS_ZIP_URL
 #           HARNESS_ARGS_JSON(bootstrap.py 로 넘길 인자, JSON 문자열 배열) · HARNESS_ARGS(공백으로 나누는 한 줄) · 없으면 run
 
@@ -24,7 +24,6 @@ $legacy = Join-Path $HOME 'harness-template'
 $Dir = if ($env:HARNESS_DIR) { $env:HARNESS_DIR }
        elseif ((Test-Path (Join-Path $legacy '.git')) -or (Test-Path (Join-Path $legacy '.harness-template'))) { $legacy }
        else { Join-Path $HOME '.harness-template' }
-$NodeMajor = 22
 $Yes = $env:HARNESS_YES -eq '1'
 $Dry = $env:HARNESS_DRY_RUN -eq '1'
 $NoRun = $env:HARNESS_NO_RUN -eq '1'
@@ -64,12 +63,6 @@ function Find-Python {
     }
 }
 
-function Node-Major {
-    if (-not (Have 'node')) { return 0 }
-    $v = (& node --version 2>$null) -replace '^v', ''
-    return [int]($v.Split('.')[0])
-}
-
 $plan = New-Object System.Collections.ArrayList
 function Add-Plan($tool, $found, $action, $cmd) { [void]$plan.Add([pscustomobject]@{ Tool = $tool; Found = $found; Action = $action; Cmd = $cmd }) }
 
@@ -85,15 +78,6 @@ $py = @(Find-Python)
 if ($py.Count -gt 0) { $pyArgs = @($py | Select-Object -Skip 1); Add-Plan 'python' ((& $py[0] @pyArgs --version) -replace 'Python ', '') '건너뜀' '-' }
 else { Add-Plan 'python' '없음(3.9 이상 필요)' ($(if ($hasWinget) { '설치' } else { '안내' })) (Winget-Or 'Python.Python.3.12' 'https://www.python.org/downloads/windows/') }
 
-$nm = Node-Major
-if ($nm -ge $NodeMajor) { Add-Plan 'node' (& node --version) '건너뜀' '-' }
-else {
-    $act = if ($nm -gt 0) { '올림' } else { '설치' }
-    $found = if ($nm -gt 0) { (& node --version) } else { '없음' }
-    if (Have 'nvm') { Add-Plan 'node' $found $act "nvm install $NodeMajor; nvm use $NodeMajor" }
-    elseif (Have 'fnm') { Add-Plan 'node' $found $act "fnm install $NodeMajor; fnm default $NodeMajor" }
-    else { Add-Plan 'node' $found ($(if ($hasWinget) { $act } else { '안내' })) (Winget-Or 'OpenJS.NodeJS.LTS' 'https://nodejs.org') }
-}
 $isTemplate = (Test-Path (Join-Path $Dir '.git')) -or (Test-Path (Join-Path $Dir '.harness-template'))
 if ($isTemplate) { Add-Plan '템플릿' $Dir '갱신' '-' } else { Add-Plan '템플릿' '없음' '받기' $Dir }
 
