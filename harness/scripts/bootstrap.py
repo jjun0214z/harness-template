@@ -38,6 +38,7 @@ sys.dont_write_bytecode = True  # 형제 모듈 import 가 __pycache__ 를 하�
 sys.path.insert(0, str(HERE))
 import harnesslib as hl  # noqa: E402
 import generate as gen  # noqa: E402
+import runners  # noqa: E402
 
 TEMPLATE_ROOT = gen.TEMPLATE_ROOT
 
@@ -215,23 +216,27 @@ def detect_engines(kind: str) -> str:
 
 
 def simple_interview(kind: str, reader: Callable[[str], str] = input, root_fixed: Optional[Path] = None,
-                     use_orca: bool = True, title: Optional[str] = None) -> dict:
-    """기본 셋업: 질문 3개(프로젝트 이름 · 엔진 · 호칭) + 요약 확인. --title 을 주면 호칭은 묻지 않는다. 나머지는 기본값(자세히는 --detail)."""
+                     runner: Optional[str] = None, title: Optional[str] = None) -> dict:
+    """기본 셋업: 질문 4개(프로젝트 이름 · 엔진 · 작업자 실행 방식 · 호칭) + 요약 확인.
+    --runner · --title 을 주면 그 질문은 묻지 않는다. 나머지는 기본값(자세히는 --detail).
+    Orca 같은 선택 도구는 사용자가 고를 때만 깔린다(묻지 않고 켜지 않는다)."""
     cfg = hl.default_config()
     p = cfg["project"]
-    say(f"\n하네스 셋업 (질문 {2 if title else 3}개. 전부 고르려면 --detail)")
+    n = 2 + (runner is None) + (title is None)
+    say(f"\n하네스 셋업 (질문 {n}개. 전부 고르려면 --detail)")
     p["name"] = ask("1) 프로젝트 이름", caller_base().name, reader)
     p["slug"] = default_slug(p["name"])
     choice = ask("2) 엔진 (1) Claude (2) Codex (3) 둘 다", detect_engines(kind), reader)
     cfg["engines"] = {"1": ["claude"], "2": ["codex"], "3": ["claude", "codex"]}.get(choice, ["claude"])
-    p["owner_title"] = title or ask("3) 호칭", hl.DEFAULT_OWNER_TITLE, reader)
-    # Orca 는 묻지 않는다: 있으면 쓰고, 없으면 도구 표에 「설치(선택)」로 나온다(동의 한 번). --no-orca 로 뺀다
-    installed = hl.find_tool("orca", kind, hl.tool_extra_paths("orca", kind)) is not None
-    cfg["orca"]["enabled"] = use_orca
-    cfg["orca"]["_auto"] = use_orca  # 기본값으로 켠 것: 끝내 설치하지 못하면 Orca 없이 만든다
+    i = 3
+    if runner is None:
+        runner = runners.from_choice(ask(f"{i}) {runners.QUESTION}", "1", reader))
+        i += 1
+    cfg["runner"] = runner
+    p["owner_title"] = title or ask(f"{i}) 호칭", hl.DEFAULT_OWNER_TITLE, reader)
     root = root_fixed or project_root(None, cfg)
     engines = " · ".join({"claude": "Claude", "codex": "Codex"}[e] for e in cfg["engines"])
-    orca = ("Orca 사용" if installed else "Orca 없으면 설치(선택)") if use_orca else "Orca 없음(--no-orca)"
+    orca = f"작업자 {runners.label(cfg)}"
     problem = root_problem(root, cfg, False)
     if problem:
         say("\n" + problem)
@@ -296,11 +301,11 @@ def interview(kind: str, reader: Callable[[str], str] = input, default_root=None
     say("\n[3/4] 규칙 스킬: 절차 뼈대 5개는 항상 넣는다")
     cfg["skills"]["fill"] = [s for s in hl.FILL_SKILLS if ask_yes(f"  채울 자리 틀 {s} 넣기", True, reader)]
 
-    say("\n[4/4] 엔진 · Orca")
+    say("\n[4/4] 엔진 · 작업자 실행 방식")
     choice = ask("엔진 (1) Claude (2) Codex (3) 둘 다", "1", reader)
     cfg["engines"] = {"1": ["claude"], "2": ["codex"], "3": ["claude", "codex"]}.get(choice, ["claude"])
     note = " (Windows: Orca 앱은 공식 지원, 이 하네스의 Orca 스크립트는 Git Bash 필요)" if kind == "windows" else ""
-    cfg["orca"]["enabled"] = ask_yes("Orca 를 쓰나" + note, False, reader)
+    cfg["runner"] = runners.from_choice(ask(runners.QUESTION + note, "1", reader))
     return hl.normalize(cfg)
 
 
@@ -315,8 +320,7 @@ def needed_tools(cfg: dict) -> List[str]:
         tools.append("pnpm")
     tools.append("gh")
     tools += list(cfg["engines"])
-    if hl.orca_on(cfg):
-        tools.append("orca")
+    tools += runners.tools(cfg)
     return tools
 
 
@@ -374,7 +378,7 @@ def plan_tools(cfg: dict, kind: str) -> List[dict]:
             if cmd is None and tool in ("claude", "codex", "pnpm") and node_coming:
                 cmd, hint = [AFTER_NODE], "node 설치 뒤 npm install -g " + {"claude": "@anthropic-ai/claude-code",
                                                                        "codex": "@openai/codex", "pnpm": "pnpm"}[tool]
-            action = ("설치(선택)" if tool == "orca" else "설치") if cmd else "안내"
+            action = "설치" if cmd else "안내"
             row.update(action=action, cmd=cmd, hint=hint)
         if tool == "node" and row["action"] in INSTALLING:
             node_coming = True
@@ -440,8 +444,8 @@ def tools_step(cfg: dict, kind: str, rep: Report, yes: bool, interactive: bool) 
         if r["action"] == "안내" or not go:
             rep.add(f"도구 {tool}", "없음", f"{r['action']}: {r['hint']}")
             rep.todo(f"{tool} {'올리기' if r['action'] == '올림' else '설치'}: {r['hint']}")
-            if tool == "orca" and (r["action"] == "설치(선택)" or cfg["orca"].get("_auto")):
-                cfg["orca"]["enabled"] = False  # 설치를 안 했으면 Orca 없이 만든다(나중에 설치하고 다시 돌리면 켜진다)
+            if tool == "orca" and r["action"] == "설치":  # 설치할 수 있었는데 안 했다(동의 안 함). 「안내」는 손 설치라 설정을 둔다
+                orca_fallback(cfg, rep)
             continue
         cmd, hint = r["cmd"], r["hint"]
         if cmd and cmd[0] == AFTER_NODE:
@@ -465,8 +469,15 @@ def tools_step(cfg: dict, kind: str, rep: Report, yes: bool, interactive: bool) 
         if state != "통과":
             rep.todo(f"{tool}: {detail}")
             if tool == "orca":
-                cfg["orca"]["enabled"] = False
+                orca_fallback(cfg, rep)
     login_step(cfg, kind, rep)
+
+
+def orca_fallback(cfg: dict, rep: Report) -> None:
+    """Orca 를 골랐는데 설치하지 못했다: 없는 도구를 가리키는 하네스를 만들지 않고 기본 방식으로 만든 뒤 알린다."""
+    cfg["runner"] = runners.DEFAULT_RUNNER
+    rep.todo(f"Orca 를 골랐지만 설치되지 않아 작업자 실행 방식을 {runners.LABELS[runners.DEFAULT_RUNNER]}로 만들었다. "
+             f"Orca 를 설치한 뒤 harness.json 의 runner 를 \"orca\" 로 바꾸고 {hl.boot_cmd('generate')} 를 돌린다")
 
 
 def logged_in(tool: str, kind: str) -> Optional[bool]:
@@ -1133,7 +1144,7 @@ def load_or_ask(args, kind: str) -> dict:
         cfg = interview(kind, default_root=None if (args.root or args.target) else project_root, title=title)
     else:
         fixed = Path(args.target).expanduser().resolve().parent if args.target else (Path(args.root).expanduser().resolve() if args.root else None)
-        cfg = simple_interview(kind, root_fixed=fixed, use_orca=not getattr(args, "no_orca", False), title=title)
+        cfg = simple_interview(kind, root_fixed=fixed, runner=chosen_runner(args), title=title)
     chosen = cfg.pop("_root", None)
     if chosen and not args.target:
         args.root = chosen
@@ -1184,7 +1195,6 @@ def cmd_run(args) -> int:
     elif created:  # 먼저 git init 만 해 둔 빈 저장소: 기준 브랜치 이름을 맞춘다
         run(["git", "symbolic-ref", "HEAD", f"refs/heads/{cfg['harness_repo']['base_branch']}"], cwd=target)
     rep.add("하네스 저장소", "통과", f"{'새로 만듦' if created else '있음'} {target}")
-    cfg["orca"].pop("_auto", None)
     text = hl.dump_config(cfg)
     cpath = target / hl.CONFIG_NAME
     if not cpath.is_file() or cpath.read_text(encoding="utf-8") != text:
@@ -1318,6 +1328,13 @@ def cmd_add_repo(args) -> int:
     return 1 if rep.failed() else 0
 
 
+def chosen_runner(args) -> Optional[str]:
+    """--runner 가 있으면 그것. 옛 --no-orca 는 「기본 방식」으로 읽는다(질문을 건너뛴다). 없으면 None(묻는다)."""
+    if getattr(args, "runner", None):
+        return args.runner
+    return runners.DEFAULT_RUNNER if getattr(args, "no_orca", False) else None
+
+
 def config_for(args) -> dict:
     return hl.load_config(Path(args.config) if args.config else resolve_target(args, None) / hl.CONFIG_NAME)
 
@@ -1328,7 +1345,7 @@ def cmd_check(args) -> int:
     except hl.ConfigError as exc:
         hl.eprint(exc)
         return 2
-    say(f"설정 통과: {cfg['project']['name']} · 저장소 {len(cfg['repos'])} · 엔진 {', '.join(cfg['engines'])} · Orca {'예' if hl.orca_on(cfg) else '아니오'}")
+    say(f"설정 통과: {cfg['project']['name']} · 저장소 {len(cfg['repos'])} · 엔진 {', '.join(cfg['engines'])} · 작업자 {runners.label(cfg)}")
     return 0
 
 
@@ -1346,8 +1363,11 @@ def cmd_tools(args) -> int:
 
 def cmd_generate(args) -> int:
     target = resolve_target(args, None)
+    path = Path(args.config) if args.config else target / hl.CONFIG_NAME
     try:
-        cfg = hl.load_config(Path(args.config) if args.config else target / hl.CONFIG_NAME)
+        if hl.migrate_config_file(path):
+            say(f"설정 이전: {path} 의 orca.enabled 를 runner 로 옮겼다")
+        cfg = hl.load_config(path)
     except hl.ConfigError as exc:
         hl.eprint(exc)
         return 2
@@ -1387,8 +1407,10 @@ def main(argv=None) -> int:
     p.add_argument("--create-github", action="store_true", help="gh 로그인이 있으면 원격 저장소(비공개) · 라벨을 만든다")
     p.add_argument("--skip-install", action="store_true", help="엔진 플러그인 · Orca 등록을 건너뛴다")
     p.add_argument("--force", action="store_true", help="비어 있지 않은 폴더(git 저장소가 아닌 것)에 하네스를 만든다")
-    p.add_argument("--detail", action="store_true", help="기본값을 쓰지 않고 전부 묻는다(GitHub · 호칭 · 하네스 연결 · 저장소 · 스킬 · Orca)")
-    p.add_argument("--no-orca", action="store_true", help="Orca 를 쓰지 않는다(기본은 있으면 쓰고 없으면 설치를 제안)")
+    p.add_argument("--detail", action="store_true", help="기본값을 쓰지 않고 전부 묻는다(GitHub · 호칭 · 하네스 연결 · 저장소 · 스킬 · 작업자 실행 방식)")
+    p.add_argument("--runner", choices=runners.RUNNERS,
+                   help=f"작업자 실행 방식(기본: {runners.DEFAULT_RUNNER}). 주면 그 질문을 묻지 않는다. orca 를 고를 때만 Orca 를 설치한다")
+    p.add_argument("--no-orca", action="store_true", help=argparse.SUPPRESS)  # 옛 옵션: --runner subagent 와 같다
     p.add_argument("--title", "--owner-title", dest="title",
                    help=f"결정권자를 부르는 호칭(기본: {hl.DEFAULT_OWNER_TITLE}). 새로 셋업할 때만 쓴다. 이미 만든 하네스는 harness.json 을 고친다")
     for name in ("check", "tools", "generate", "doctor"):

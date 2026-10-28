@@ -115,7 +115,10 @@ class Sandbox:
         subprocess.run(["git", "--git-dir", str(bare), "symbolic-ref", "HEAD", f"refs/heads/{branch}"], check=True, env=env)
         return str(bare)
 
-    def config(self, engines, orca, slug="demo"):
+    def config(self, engines, runner, slug="demo"):
+        """runner: "subagent" · "worktree-session" · "orca". 옛 시험 호환으로 True/False 도 받는다(Orca 켬/끔)."""
+        if isinstance(runner, bool):
+            runner = "orca" if runner else "subagent"
         cfg = {
             "version": 1,
             "project": {"name": "Demo 프로젝트", "slug": slug, "github_org": "demo-org", "owner_title": "주임님"},
@@ -129,10 +132,11 @@ class Sandbox:
                  "ask_on_push": ["main"], "checks": []},
             ],
             "engines": engines,
-            "orca": {"enabled": orca, "workspaces_dir": str(self.tmp / "orca-ws")},
+            "runner": runner,
+            "orca": {"workspaces_dir": str(self.tmp / "orca-ws")},
             "platform": {"python": "python3"},
         }
-        path = self.tmp / f"harness-{'-'.join(engines)}-{int(orca)}.json"
+        path = self.tmp / f"harness-{'-'.join(engines)}-{runner}.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
 

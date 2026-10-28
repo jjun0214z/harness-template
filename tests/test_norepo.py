@@ -19,7 +19,7 @@ class NoRepos(unittest.TestCase):
         self.addCleanup(self.sb.cleanup)
         self.target = self.sb.projects / "orchestrator"
         cfg = {"project": {"name": "Empty 프로젝트", "slug": "empty", "owner_title": "주임님"},
-               "repos": [], "engines": ["claude", "codex"], "orca": {"enabled": False}, "platform": {"python": "python3"}}
+               "repos": [], "engines": ["claude", "codex"], "runner": "subagent", "platform": {"python": "python3"}}
         self.cfg = self.sb.tmp / "empty.json"
         self.cfg.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
 

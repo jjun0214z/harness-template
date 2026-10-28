@@ -18,6 +18,10 @@ import subprocess
 import sys
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
+if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import runners  # noqa: E402  작업자 실행 방식 어댑터(같은 폴더)
+
 CONFIG_NAME = "harness.json"
 TEMPLATE_MARK_FILE = ".harness-template"  # 템플릿 저장소 루트에만 있다. 생성된 하네스에는 복사하지 않는다
 TEMPLATE_URL = "https://github.com/jjun0214z/harness-template"
@@ -68,7 +72,8 @@ def default_config() -> dict:
         "repos": [],
         "skills": {"fill": list(FILL_SKILLS)},
         "engines": ["claude"],
-        "orca": {"enabled": False, "workspaces_dir": "~/orca/workspaces"},
+        "runner": runners.DEFAULT_RUNNER,
+        "orca": {"workspaces_dir": "~/orca/workspaces"},
         "labels": list(DEFAULT_LABELS),
         "platform": {"python": ""},
         "template": {"url": TEMPLATE_URL, "ref": TEMPLATE_REF},
@@ -78,6 +83,7 @@ def default_config() -> dict:
 def normalize(raw: dict) -> dict:
     """빠진 칸을 기본값으로 채운 새 dict. 검증은 validate 가 한다."""
     cfg = default_config()
+    raw = runners.migrate(raw)  # 옛 orca.enabled → runner
     for key, value in raw.items():
         if isinstance(value, dict) and isinstance(cfg.get(key), dict):
             merged = dict(cfg[key])
@@ -85,8 +91,6 @@ def normalize(raw: dict) -> dict:
             cfg[key] = merged
         else:
             cfg[key] = value
-    if isinstance(cfg.get("orca"), bool):
-        cfg["orca"] = {"enabled": cfg["orca"], "workspaces_dir": "~/orca/workspaces"}
     org = cfg["project"].get("github_org") or ""
     hr = cfg["harness_repo"]
     if hr.get("source") == "local" and hr.get("path"):
@@ -186,8 +190,8 @@ def validate(cfg: dict) -> List[str]:
     fill = (cfg.get("skills") or {}).get("fill") or []
     if any(s not in FILL_SKILLS for s in fill):
         errs.append(f"skills.fill 은 {', '.join(FILL_SKILLS)} 중에서 고른다")
-    if not isinstance((cfg.get("orca") or {}).get("enabled"), bool):
-        errs.append("orca.enabled 는 true/false 다")
+    if cfg.get("runner") not in runners.RUNNERS:
+        errs.append(f"runner 는 {' · '.join(runners.RUNNERS)} 중 하나다")
     return errs
 
 
@@ -209,6 +213,26 @@ def load_config(path: Path) -> dict:
     if errs:
         raise ConfigError("설정 오류:\n- " + "\n- ".join(errs))
     return cfg
+
+
+def migrate_config_file(path: Path) -> bool:
+    """옛 칸(orca.enabled)이 남은 설정 파일을 제자리에서 옮긴다. 다른 칸 · 순서는 그대로 둔다. 바꿨으면 True."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False  # 읽기 오류는 load_config 가 알린다
+    if not isinstance(raw, dict):
+        return False
+    new = runners.migrate(raw)
+    if new == raw:
+        return False
+    if "runner" not in raw:  # 새 칸은 engines 바로 뒤에 둔다(사람이 읽기 좋게)
+        items = [(k, v) for k, v in new.items() if k != "runner"]
+        at = next((i + 1 for i, (k, _) in enumerate(items) if k == "engines"), len(items))
+        new = dict(items[:at] + [("runner", new["runner"])] + items[at:])
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(dump_config(new))
+    return True
 
 
 def dump_config(cfg: dict) -> str:
@@ -263,7 +287,7 @@ def has(cfg: dict, engine: str) -> bool:
 
 
 def orca_on(cfg: dict) -> bool:
-    return bool(cfg["orca"]["enabled"])
+    return runners.is_orca(cfg)
 
 
 # ---------------------------------------------------------------- OS

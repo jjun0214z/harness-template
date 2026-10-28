@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 sys.dont_write_bytecode = True  # 형제 모듈 import 가 __pycache__ 를 하네스 저장소에 남기지 않게 한다
 sys.path.insert(0, str(HERE))
 import harnesslib as hl  # noqa: E402
+import runners  # noqa: E402
 
 ENGINE_ROOT = HERE.parent            # harness/
 TEMPLATE_ROOT = ENGINE_ROOT.parent   # harness/ 를 품은 저장소 루트
@@ -103,13 +104,7 @@ def context(cfg: dict) -> Dict[str, str]:
     for r in cfg["repos"]:
         cmds = " · ".join(f"`{c}`" for c in r["checks"]) or "아직 없다(`harness.json` repos[].checks 에 적는다)"
         checks.append(f"| {r['dir']} | {cmds} |")
-    if hl.orca_on(cfg):
-        cleanup = ("Orca 작업자는 작업자 출력의 `bash scripts/orca-finish-worker.sh <dispatch> <워크트리>`, "
-                   f"Orca 밖 작업자는 `{py} harness/scripts/finish_worker.py <워크트리>`. "
-                   f"오래 남은 작업 공간은 `{py} harness/scripts/cleanup_worktrees.py` 로 미리 보고 `--apply`.")
-    else:
-        cleanup = (f"`{py} harness/scripts/finish_worker.py <워크트리>`. "
-                   f"오래 남은 작업 공간은 `{py} harness/scripts/cleanup_worktrees.py` 로 미리 보고 `--apply`(원격에 다 들어간 것만 지운다).")
+    cleanup = runners.cleanup_line(cfg, py)
     labels = " · ".join(f"`{x}`" for x in cfg["labels"]) + " · `repo:<키>`"
     ctx = {
         "project": p["name"], "owner": owner, "slug": p["slug"], "labels": labels,
@@ -124,20 +119,7 @@ def context(cfg: dict) -> Dict[str, str]:
 
 def dispatch_table(cfg: dict) -> str:
     rows = ["| 어디서 | 코드를 고치는 과제 | 조사 · 검토 |", "| --- | --- | --- |"]
-    engines = cfg["engines"]
-    if hl.orca_on(cfg):
-        agents = " · ".join(f"`bash scripts/orca-worker.sh --agent {e} <키> <작업이름> @브리프파일`" for e in engines)
-        extra = " 또는 Codex 앱에서 저장 프로젝트를 골라 워크트리로 새 작업" if "codex" in engines else ""
-        rows.append(f"| Orca 가 켜진 기기 | {agents}{extra}. 코드 작업자를 서브에이전트로 띄우지 않는다 | 서브에이전트 (`researcher` · `reviewer`) |")
-        rows.append("| Orca 가 없는 곳(클라우드 · 폰) | 서브에이전트 작업자 (`<키>-worker`, 워크트리 격리) | 서브에이전트 |")
-    else:
-        parts = []
-        if "claude" in engines:
-            parts.append("Claude: 서브에이전트 `<키>-worker`(워크트리 격리) 또는 해당 저장소에서 `claude --worktree <작업이름>`")
-        if "codex" in engines:
-            parts.append("Codex: 앱에서 해당 저장 프로젝트를 골라 새 작업을 워크트리로, 또는 `.codex/agents/<키>-worker` 서브에이전트")
-        rows.append(f"| 어디서나 | {' / '.join(parts)} | 서브에이전트 (`researcher` · `reviewer`) |")
-    return "\n".join(rows)
+    return "\n".join(rows + runners.dispatch_rows(cfg))
 
 
 def render(text: str, ctx: Dict[str, str]) -> str:
@@ -242,10 +224,7 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
     p, h = cfg["project"], cfg["harness_repo"]
     owner, slug = p["owner_title"], p["slug"]
     engines = " · ".join({"claude": "Claude", "codex": "Codex"}[e] for e in cfg["engines"])
-    worker_rule = (f"- 코드를 고치는 작업자는 해당 저장소의 **격리 워크트리 세션**에서만 일한다(Orca `scripts/orca-worker.sh`"
-                   + (" 또는 Codex 앱 저장 프로젝트 워크트리" if hl.has(cfg, "codex") else "") + ").\n"
-                   if hl.orca_on(cfg) else
-                   "- 코드를 고치는 작업자는 해당 저장소의 **격리 워크트리**에서만 일한다(서브에이전트 워크트리 격리 · `claude --worktree` · Codex 앱 워크트리).\n")
+    worker_rule = runners.worker_rule(cfg)
     body = f"""# {p['name']} 오케스트레이터
 
 > 셋업 · 점검: 「셋업해」라고 하면 `setup` 스킬(`plugins/{slug}/skills/setup/SKILL.md`)을 따른다. 설정 원본은 `harness.json` 하나다.
@@ -276,7 +255,7 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
 
 | 위치 | 역할 |
 | --- | --- |
-| `harness.json` | **설정 원본 한 장.** 저장소 목록 · 엔진 · Orca 여부. 바꾼 뒤 `{cfg['platform']['python']} harness/scripts/generate.py`. 저장소 추가는 `{cfg['platform']['python']} harness/scripts/bootstrap.py add-repo` |
+| `harness.json` | **설정 원본 한 장.** 저장소 목록 · 엔진 · 작업자 실행 방식(`runner`). 바꾼 뒤 `{cfg['platform']['python']} harness/scripts/generate.py`. 저장소 추가는 `{cfg['platform']['python']} harness/scripts/bootstrap.py add-repo` |
 | `CLAUDE.md` · `AGENTS.md` | 공통 지침과 Codex 진입점. `AGENTS.md` 는 이 파일을 읽게만 한다 |
 | 플러그인 `{slug}` (`plugins/{slug}/`) | 모든 저장소와 엔진이 같이 쓰는 스킬 · 작업자 · 안전 훅(push 가드) |
 | `harness/hooks/` | 이 저장소 전용 훅: 규칙 파일 보호 · 원격 하네스 동기화 |
@@ -285,7 +264,7 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
 | `docs/기록/` | 결정의 근거 원본. {ctx['record_from']} |
 {ctx['board_row']}
 | `README.md` | 설치한 사람용 안내 한 장. 「하고 싶은 것 → 이렇게 말한다」 |
-{"| `scripts/orca-*.sh` | Orca 작업자 띄우기 · 중간 지시 · 정리 |" + chr(10) if hl.orca_on(cfg) else ""}
+{runners.layout_rows(cfg)}
 ## 일하는 순서
 
 1. 세션을 열면 {ctx['session_open']}.
@@ -333,9 +312,7 @@ def core_md(cfg: dict, ctx: Dict[str, str]) -> str:
     owner, slug = p["owner_title"], p["slug"]
     ask = [f"`{r['dir']}` `{b}`" for r in cfg["repos"] for b in r["ask_on_push"]]
     ask_line = (f"- 매번 {owner}께 묻는 push: {' · '.join(ask)} (훅이 묻는다)." if ask else f"- 매번 묻는 push 는 설정에 없다(`harness.json` repos[].ask_on_push).")
-    engine = ("- 작업자는 Orca 로 해당 저장소 워크트리에 띄운다(`scripts/orca-worker.sh`). 도구가 실패하면 조용히 서브에이전트로 바꾸지 않고 알린다."
-              if hl.orca_on(cfg) else
-              "- 작업자는 해당 저장소의 격리 워크트리(서브에이전트 · `claude --worktree` · Codex 앱 워크트리)에서만 일한다.")
+    engine = runners.core_line(cfg)
     skills = ["start"] + [s for s in hl.PROCEDURE_SKILLS] + list(cfg["skills"]["fill"])
     when = {"start": "설치 직후 · 「시작해」 · 「뭐부터 해」 · 「다음 뭐야」 (지금 할 것 한 개를 고른다)",
             "absolute-rules": "모든 작업 시작 전 · 새 지시가 기준을 건드릴 때", "work-method": "재거나 판정 · 보고하기 전",
@@ -551,7 +528,7 @@ def readme_md(cfg: dict, ctx: Dict[str, str]) -> str:
 | --- | --- |
 | `상황판.md` | 지금 집중하는 것 · 남은 준비 한 장 |
 | `CLAUDE.md` | 오케스트레이터 지침 · 저장소 지도 · 일하는 순서 |
-| `harness.json` | 설정 원본 한 장(저장소 · 엔진 · Orca). 고친 뒤 `{py} harness/scripts/generate.py` |
+| `harness.json` | 설정 원본 한 장(저장소 · 엔진 · 작업자 실행 방식). 고친 뒤 `{py} harness/scripts/generate.py` |
 | `plugins/{p['slug']}/skills/` | 규칙 스킬. 「채울 자리」는 사람이 채운다 |
 | `docs/기록/` | 결정의 근거(명령과 출력, 파일과 줄) |
 
@@ -603,7 +580,7 @@ def plugin_hooks(cfg: dict) -> dict:
         "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": hook_cmd(py, "guard-push.py")}]}],
         "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": start}],
     }
-    if hl.has(cfg, "codex") and hl.orca_on(cfg):
+    if hl.has(cfg, "codex") and runners.is_orca(cfg):
         hooks["SessionEnd"] = [{"hooks": [{"type": "command", "command": hook_cmd(py, "archive-codex-session.py")}]}]
     return {"hooks": hooks}
 
@@ -612,7 +589,7 @@ def plugin_scripts(cfg: dict) -> List[str]:
     names = ["guard-push.py", "core-context.py"]
     if hl.has(cfg, "codex"):
         names += ["codex-bind-session.py", "codex_project_binding.py"]
-        if hl.orca_on(cfg):
+        if runners.is_orca(cfg):
             names.append("archive-codex-session.py")
     return names
 
@@ -773,11 +750,10 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
         for r in cfg["repos"]:
             managed(f".codex/agents/{r['key']}-worker.toml",
                     codex_agent_toml(cfg, f"{r['key']}-worker", f"{r['dir']} 저장소 과제를 구현하고 검증하는 작업자"))
-    if hl.orca_on(cfg):
-        for src in sorted((SKELETON / "orca").glob("*.sh")):
-            if w.guard(f"scripts/{src.name}"):
-                produced.append(f"scripts/{src.name}")
-                w.copy(src, f"scripts/{src.name}")
+    for rel, src in runners.extra_files(cfg, SKELETON).items():
+        if w.guard(rel):
+            produced.append(rel)
+            w.copy(src, rel)
 
     w.seed("README.md", readme_md(cfg, ctx))
     w.seed_blocks("상황판.md", board_md(cfg, ctx), legacy=legacy_blocks(LEGACY_BOARD, lctx))
@@ -809,8 +785,11 @@ def main(argv=None) -> int:
     ap.add_argument("--config", type=Path, help="설정 파일(기본 <root>/harness.json)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
+    path = args.config or args.root / hl.CONFIG_NAME
     try:
-        cfg = hl.load_config(args.config or args.root / hl.CONFIG_NAME)
+        if not args.dry_run and hl.migrate_config_file(path):
+            print(f"설정 이전: {path} 의 orca.enabled 를 runner 로 옮겼다")
+        cfg = hl.load_config(path)
     except hl.ConfigError as exc:
         hl.eprint(exc)
         return 2

@@ -1,4 +1,4 @@
-"""기본 셋업 질문 3개(fix-simple · 호칭) · 윈도우 실사용 결함(fix-win-run) · Orca 자동 설치(fix-orca-auto)."""
+"""기본 셋업 질문(이름 · 엔진 · 작업자 실행 방식 · 호칭) · 윈도우 실사용 결함(fix-win-run) · Orca 는 고를 때만 설치."""
 from __future__ import annotations
 
 import json
@@ -305,8 +305,8 @@ class WindowsJudgments(unittest.TestCase):
         self.assertNotIn("python3 harness/scripts", claude_md)
 
 
-class OrcaAutoInstall(unittest.TestCase):
-    """mac 흉내: brew 로 Orca 설치 → 앱 열기(open -a Orca) → CLI 응답 대기 → 저장소 등록 순서."""
+class OrcaChosenInstall(unittest.TestCase):
+    """실행 방식으로 Orca 를 고른 경우만 설치한다. mac 흉내: brew 설치 → 앱 열기(open -a Orca) → CLI 응답 대기 → 저장소 등록 순서."""
 
     def test_install_open_wait_register(self):
         if hl.os_kind() != "mac":
@@ -325,9 +325,9 @@ class OrcaAutoInstall(unittest.TestCase):
             (bin_ / name).chmod(0o755)
         box = sb.tmp / "o"
         box.mkdir()
-        r = sb.bootstrap("run", "--offline", input_text="o\n\n\n\ny\n", cwd=box, HARNESS_ORCA_WAIT="10")
+        r = sb.bootstrap("run", "--offline", input_text="o\n\n3\n\n\ny\n", cwd=box, HARNESS_ORCA_WAIT="10")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("| orca | 없음 | 설치(선택) | brew install --cask stablyai/orca/orca |", r.stdout)
+        self.assertIn("| orca | 없음 | 설치 | brew install --cask stablyai/orca/orca |", r.stdout)
         lines = log.read_text(encoding="utf-8").splitlines()
         i_install = lines.index("brew install --cask stablyai/orca/orca")
         i_open = lines.index("open -a Orca")
@@ -337,21 +337,27 @@ class OrcaAutoInstall(unittest.TestCase):
         self.assertLess(i_open, i_ok)
         self.assertLess(i_ok, i_add)
         cfg = json.loads((box / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
-        self.assertTrue(cfg["orca"]["enabled"])
-        self.assertNotIn("_auto", cfg["orca"])
+        self.assertEqual(cfg["runner"], "orca")
+        self.assertNotIn("enabled", cfg["orca"])
         self.assertTrue((box / "orchestrator" / "scripts" / "orca-worker.sh").is_file())
 
     def test_declined_orca_means_no_orca(self):
+        """Orca 를 골랐지만 설치에 동의하지 않았다: 없는 도구를 가리키는 하네스를 만들지 않고 기본 방식으로 만든 뒤 알린다."""
+        if hl.os_kind() != "mac":
+            self.skipTest("mac 흐름 흉내(brew 로 설치할 수 있는 상태)")
         sb = Sandbox()
         self.addCleanup(sb.cleanup)
+        (sb.bin / "brew").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (sb.bin / "brew").chmod(0o755)
         box = sb.tmp / "d"
         box.mkdir()
-        r = sb.bootstrap("run", "--offline", "--skip-install", input_text="d\n\n\n\nn\n", cwd=box)
+        r = sb.bootstrap("run", "--offline", "--skip-install", input_text="d\n\n3\n\n\nn\n", cwd=box)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("| orca | 없음 | 설치 |", r.stdout)
         cfg = json.loads((box / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
-        self.assertFalse(cfg["orca"]["enabled"], "Orca 를 설치하지 않았는데 켜 두었다")
+        self.assertEqual(cfg["runner"], "subagent", "Orca 를 설치하지 않았는데 Orca 로 만들었다")
+        self.assertIn("Orca 를 골랐지만 설치되지 않아", r.stdout)
         self.assertFalse((box / "orchestrator" / "scripts" / "orca-worker.sh").exists())
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,8 +5,8 @@
 오케스트레이터 · 저장소별 작업자 · 규칙 스킬 틀 · 안전 훅 · 작업 추적 · 기록이 한 번에 생긴다.
 
 - ⚡ **한 줄 설치**: 내려받기 · 압축 풀기 · GitHub 계정 · `gh` 가 필요 없다
-- 🧭 **질문 3개**: 프로젝트 이름 · 엔진 · 호칭만 묻고, 나머지는 기본값으로 간다
-- 🤖 **Claude / Codex**: 하나 또는 둘 다. Orca 는 있으면 쓴다
+- 🧭 **질문 4개**: 프로젝트 이름 · 엔진 · 작업자 실행 방식 · 호칭만 묻고, 나머지는 기본값으로 간다. 고르지 않은 도구는 깔지 않는다
+- 🤖 **Claude / Codex**: 하나 또는 둘 다. 작업자는 서브에이전트 · 워크트리 세션 · Orca 중 고른 방식으로 띄운다
 - 🪟 **macOS · Linux · Windows**: 같은 코드(python3 표준 라이브러리)가 돈다
 - 🔒 **덮지 않음**: 기존 설정 · 저장소 · 사람이 쓴 본문은 그대로 두고, 두 번 돌려도 안전하다
 
@@ -71,18 +71,19 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | [🔧 설정](#-설정) | `harness.json` · 설정 바꾸기 · 이름 바꾸면 남는 자리 |
 | [🔄 템플릿 갱신](#-템플릿-갱신) | `update` 와 백업 파일 |
 | [🧹 작업 정리](#-작업-정리) | 끝난 작업자 · 세션 닫기 |
-| [💻 운영체제별 차이](#-운영체제별-차이) | macOS · Linux · Windows · Orca 없을 때 |
+| [💻 운영체제별 차이](#-운영체제별-차이) | macOS · Linux · Windows · 작업자 실행 방식 |
 | [🧪 테스트](#-테스트) | 검사 명령 |
 
 ## 🧭 설치하면 일어나는 일
 
-**질문 3개와 확인 한 번이면 끝난다.**
+**질문 4개와 확인 한 번이면 끝난다.**
 
 1. **프로젝트 이름** (Enter = 지금 폴더 이름)
 2. **엔진** Claude · Codex · 둘 다 (Enter = 설치돼 있는 것)
-3. **호칭** 결정권자를 부르는 말 (Enter = 주임님, `--title <호칭>` 을 주면 묻지 않는다)
-4. 요약 「여기에 만듭니다: <경로> · 엔진 · 저장소는 나중에(add-repo) · Orca · 호칭」 → Enter (다른 경로를 쳐도 된다)
-5. 도구 표 → 설치 동의 한 번 (Orca 도 없으면 여기서 같이 설치, `--no-orca` 로 뺀다)
+3. **작업자 실행 방식** 서브에이전트 · 워크트리 세션 · Orca (Enter = 서브에이전트, `--runner <방식>` 을 주면 묻지 않는다)
+4. **호칭** 결정권자를 부르는 말 (Enter = 주임님, `--title <호칭>` 을 주면 묻지 않는다)
+5. 요약 「여기에 만듭니다: <경로> · 엔진 · 저장소는 나중에(add-repo) · 작업자 · 호칭」 → Enter (다른 경로를 쳐도 된다)
+6. 도구 표 → 설치 동의 한 번 (Orca 는 3번에서 골랐을 때만 표에 나온다)
 
 막 산 컴퓨터에서도 돈다. 먼저 무엇이 있고 없는지 표로 보여 주고, 한 번 동의받은 뒤 필요한 것만 설치한다.
 
@@ -96,9 +97,9 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | 저장소 | 0개. 나중에 `add-repo` 로 더한다 |
 | GitHub | 없음(로컬만) |
 | 규칙 스킬 | 채울 자리 틀 전부 |
-| Orca | 있으면 쓰고, 없으면 도구 표에 「설치(선택)」으로 나온다 |
+| 작업자 실행 방식 | 서브에이전트(설치할 것이 없다). Orca 는 고를 때만 설치한다 |
 
-전부 직접 고르려면 `--detail` 을 붙인다. 질문이 네 묶음(프로젝트 · 저장소 · 규칙 스킬 · 엔진/Orca)으로 늘어난다.
+전부 직접 고르려면 `--detail` 을 붙인다. 질문이 네 묶음(프로젝트 · 저장소 · 규칙 스킬 · 엔진/작업자 실행 방식)으로 늘어난다.
 
 | 한 줄 설치에 옵션 주기 | 방법 |
 | --- | --- |
@@ -193,7 +194,7 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | 하고 싶은 것 | 하네스 폴더에서 (Windows 는 `python3` 대신 `py -3`) |
 | --- | --- |
 | 저장소 더하기(새로 만들기 · 원격 받기 · 이 컴퓨터 폴더 연결) | `python3 harness/scripts/bootstrap.py add-repo` (자세히: `--detail`) |
-| 엔진 · Orca · 호칭 · GitHub 조직 바꾸기 | `harness.json` 을 고친 뒤 `python3 harness/scripts/generate.py` |
+| 엔진 · 작업자 실행 방식(`runner`) · 호칭 · GitHub 조직 바꾸기 | `harness.json` 을 고친 뒤 `python3 harness/scripts/generate.py` |
 | 템플릿 갱신 받기 | `python3 harness/scripts/bootstrap.py update` |
 | 점검 | `python3 harness/scripts/bootstrap.py doctor` |
 
@@ -223,7 +224,7 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
     {"key": "admin", "source": "local", "path": "~/code/admin", "connect_files": true}
   ],
   "engines": ["claude", "codex"],
-  "orca": {"enabled": false}
+  "runner": "subagent"
 }
 ```
 
@@ -375,10 +376,17 @@ Git Bash 에서 `curl … | bash` 한 줄을 그대로 써도 된다.
 
 </details>
 
-### 🧩 Orca 가 없을 때
+### 🧩 작업자 실행 방식
 
-작업자는 서브에이전트(`<키>-worker`, 워크트리 격리) · `claude --worktree` · Codex 앱 저장 프로젝트 워크트리로 띄운다.
-`CLAUDE.md` 「맡기는 방법」 표가 고른 조합대로 만들어진다.
+`harness.json` 의 `runner` 하나가 정한다. 고른 방식의 문장 · 파일 · 도구만 생긴다(`CLAUDE.md` 「맡기는 방법」 표도 그 방식 하나만).
+
+| `runner` | 작업자를 띄우는 곳 | 더 필요한 것 |
+| --- | --- | --- |
+| `subagent` (기본) | 서브에이전트 `<키>-worker` (워크트리 격리) | 없음 |
+| `worktree-session` | 해당 저장소의 별도 세션(`claude --worktree` · Codex 앱 워크트리) | 없음 |
+| `orca` | Orca 작업자(`scripts/orca-worker.sh`) | Orca 앱 · CLI (Windows 는 Git Bash) |
+
+바꾸려면 `runner` 를 고치고 생성기를 돌린다. 예전 설정의 `orca.enabled` 는 생성기 · `update` 가 `runner` 로 옮긴다(`true` → `orca`, `false` → `subagent`).
 
 ## 🧪 테스트
 
@@ -390,7 +398,7 @@ python3 -m unittest discover -s tests
 
 | 무엇을 보나 | 내용 |
 | --- | --- |
-| 조합 | 엔진 3 × Orca 2 조합을 끝까지 두 번 돌리기(두 번 돌려도 결과가 같은지) |
+| 조합 | 엔진 3 × 작업자 실행 방식 3 조합을 끝까지 두 번 돌리기(두 번 돌려도 결과가 같은지) |
 | 도구 없는 PATH | 도구가 하나도 없는 PATH · 일부만 있는 PATH 에서 install 이 고르는 순서 |
 | 저장소 분기 | 저장소 새로 만들기 · 원격 유무 · gh 없음 · gh 로그인 안 됨 |
 | 갱신 | `update` |

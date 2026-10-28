@@ -74,8 +74,8 @@
     "claude",
     "codex"
   ],
+  "runner": "orca",
   "orca": {
-    "enabled": true,
     "workspaces_dir": "~/orca/workspaces"
   },
   "labels": [

@@ -38,7 +38,7 @@ class Onboarding(unittest.TestCase):
     def write_config(self, name="zero.json", **over):
         cfg = {"project": {"name": "Zero 프로젝트", "slug": "zero", "owner_title": "주임님"},
                "harness_repo": {"dir": "orchestrator", "remote": "", "base_branch": "main"},
-               "repos": [], "engines": ["claude"], "orca": {"enabled": False},
+               "repos": [], "engines": ["claude"], "runner": "subagent",
                "platform": {"python": "python3"}}
         cfg.update(over)
         path = self.sb.tmp / name
@@ -218,7 +218,7 @@ print(json.dumps({{"result": out}}))
         cfg = {"project": {"name": "Orca 프로젝트", "slug": "oc", "owner_title": "주임님"},
                "harness_repo": {"dir": "orchestrator", "remote": "", "base_branch": "main"},
                "repos": [{"key": "app", "base_branch": "main"}], "engines": ["claude"],
-               "orca": {"enabled": True, "workspaces_dir": str(self.sb.tmp / "ws")},
+               "runner": "orca", "orca": {"workspaces_dir": str(self.sb.tmp / "ws")},
                "platform": {"python": "python3"}}
         path = self.sb.tmp / "orca.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")

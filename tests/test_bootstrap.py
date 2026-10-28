@@ -8,16 +8,18 @@ import unittest
 
 from helpers import FORBIDDEN, Sandbox, tree_snapshot
 
-COMBOS = [(["claude"], False), (["claude"], True), (["codex"], False), (["codex"], True),
-          (["claude", "codex"], False), (["claude", "codex"], True)]
+# 엔진 3 × 작업자 실행 방식 3
+ENGINE_SETS = (["claude"], ["codex"], ["claude", "codex"])
+COMBOS = [(e, r) for e in ENGINE_SETS for r in ("subagent", "worktree-session", "orca")]
 
 
 class EndToEnd(unittest.TestCase):
-    def run_combo(self, engines, orca):
+    def run_combo(self, engines, runner):
+        orca = runner == "orca"
         sb = Sandbox()
         self.addCleanup(sb.cleanup)
         sb.fake_tools()
-        cfg_path = sb.config(engines, orca)
+        cfg_path = sb.config(engines, runner)
         target = sb.projects / "orchestrator"
         args = ["run", "--config", str(cfg_path), "--target", str(target), "--offline", "--non-interactive"]
 
@@ -59,9 +61,14 @@ class EndToEnd(unittest.TestCase):
         orca_files = {"scripts/orca-worker.sh", "scripts/orca-send-worker.sh", "scripts/orca-finish-worker.sh", "scripts/orca-common.sh"}
         for group, on in ((claude_files, "claude" in engines), (codex_files, "codex" in engines), (orca_files, orca)):
             if on:
-                self.assertFalse(group - files, f"{engines} orca={orca} 에 빠짐: {group - files}")
+                self.assertFalse(group - files, f"{engines} runner={runner} 에 빠짐: {group - files}")
             else:
-                self.assertFalse(group & files, f"{engines} orca={orca} 에 있으면 안 됨: {group & files}")
+                self.assertFalse(group & files, f"{engines} runner={runner} 에 있으면 안 됨: {group & files}")
+        # 맡기는 방법은 고른 실행 방식 하나만 적는다
+        claude_md = snap1["CLAUDE.md"].decode("utf-8")
+        self.assertEqual("orca-worker.sh" in claude_md, orca)
+        self.assertEqual("claude --worktree" in claude_md, runner == "worktree-session" and "claude" in engines)
+        self.assertEqual(json.loads(snap1["harness.json"])["runner"], runner)
         archive = "plugins/demo/scripts/archive-codex-session.py"
         self.assertEqual(archive in files, "codex" in engines and orca)
 
@@ -102,24 +109,32 @@ class EndToEnd(unittest.TestCase):
             bases = [c["args"] for c in calls if c["tool"] == "orca" and c["args"][:2] == ["repo", "set-base-ref"]]
             self.assertIn("origin/develop", [a[a.index("--ref") + 1] for a in bases])
 
-    def test_claude_no_orca(self):
+    def test_claude_subagent(self):
         self.run_combo(*COMBOS[0])
 
-    def test_claude_orca(self):
+    def test_claude_worktree_session(self):
         self.run_combo(*COMBOS[1])
 
-    def test_codex_no_orca(self):
+    def test_claude_orca(self):
         self.run_combo(*COMBOS[2])
 
-    def test_codex_orca(self):
+    def test_codex_subagent(self):
         self.run_combo(*COMBOS[3])
 
-    def test_both_no_orca(self):
+    def test_codex_worktree_session(self):
         self.run_combo(*COMBOS[4])
 
-    def test_both_orca(self):
+    def test_codex_orca(self):
         self.run_combo(*COMBOS[5])
 
+    def test_both_subagent(self):
+        self.run_combo(*COMBOS[6])
+
+    def test_both_worktree_session(self):
+        self.run_combo(*COMBOS[7])
+
+    def test_both_orca(self):
+        self.run_combo(*COMBOS[8])
 
 class Regenerate(unittest.TestCase):
     def test_human_parts_kept_and_stale_removed(self):
@@ -141,7 +156,7 @@ class Regenerate(unittest.TestCase):
 
         # Claude 만 · Orca 없이로 설정을 바꿔 다시 생성
         data = json.loads(both.read_text(encoding="utf-8"))
-        data["engines"], data["orca"]["enabled"] = ["claude"], False
+        data["engines"], data["runner"] = ["claude"], "subagent"
         (target / "harness.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         r = sb.bootstrap("generate", "--target", str(target))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

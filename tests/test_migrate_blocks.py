@@ -74,7 +74,7 @@ class Migration(unittest.TestCase):
         self.target = self.sb.projects / "orchestrator"
         cfg = {"project": {"name": "Zero 프로젝트", "slug": "zero", "owner_title": "주임님"},
                "harness_repo": {"dir": "orchestrator", "remote": "", "base_branch": "main"},
-               "repos": [], "engines": ["claude"], "orca": {"enabled": False},
+               "repos": [], "engines": ["claude"], "runner": "subagent",
                "platform": {"python": "python3"}}
         path = self.sb.tmp / "zero.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
@@ -294,7 +294,7 @@ class GitignoreBlock(unittest.TestCase):
         self.target = self.sb.projects / "orchestrator"
         cfg = {"project": {"name": "Zero 프로젝트", "slug": "zero", "owner_title": "주임님"},
                "harness_repo": {"dir": "orchestrator", "base_branch": "main"},
-               "repos": [], "engines": ["claude"], "orca": {"enabled": False}, "platform": {"python": "python3"}}
+               "repos": [], "engines": ["claude"], "runner": "subagent", "platform": {"python": "python3"}}
         path = self.sb.tmp / "zero.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
         r = self.sb.bootstrap("run", "--config", str(path), "--target", str(self.target),

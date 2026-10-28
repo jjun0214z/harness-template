@@ -19,7 +19,7 @@ def new_config(sb: Sandbox, org: str = "", engines=("claude",), name="n"):
             {"key": "api", "base_branch": "main", "stack": "python"},
         ],
         "engines": list(engines),
-        "orca": {"enabled": False},
+        "runner": "subagent",
         "platform": {"python": "python3"},
     }
     path = sb.tmp / f"{name}.json"

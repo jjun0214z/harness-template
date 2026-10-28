@@ -39,7 +39,7 @@ class ConnectLocalRepo(unittest.TestCase):
                 {"key": "admin", "source": "local", "path": str(self.legacy), "connect_files": connect_files},
             ],
             "engines": list(engines),
-            "orca": {"enabled": False},
+            "runner": "subagent",
             "platform": {"python": "python3"},
         }
         p = self.sb.tmp / f"link-{connect_files}.json"
