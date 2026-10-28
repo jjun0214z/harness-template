@@ -260,6 +260,7 @@ push 가드와 규칙 보호는 같은 명령 해석기(`shellwords.py`)를 쓴�
 
 | 묶음 | 켜면 |
 | --- | --- |
+| `workflow` | 작업 번호 · 저장소별 워크트리 · git 으로 계산하는 상태([작업 흐름](#-작업-흐름-workflow-묶음)). `--detail` 셋업에서 기본 답이 「넣음」 |
 | `cleanup` | 작업 정리 때 임시 찌꺼기(Claude 임시 폴더 · 크롬 복제본 · `/tmp` 검수 찌꺼기)도 지운다. macOS · Linux |
 | `codex-desktop` | Codex 세션을 데스크톱 앱 프로젝트에 귀속하고 끝난 Codex 세션을 보관한다. Codex 를 고른 경우 |
 
@@ -399,6 +400,22 @@ Git Bash 에서 `curl … | bash` 한 줄을 그대로 써도 된다.
 - `winpty` 가 없으면 새 PowerShell 창을 열어 거기서 잇는다.
 
 </details>
+
+### 🧭 작업 흐름 (workflow 묶음)
+
+`packs` 에 `workflow` 를 넣으면 작업 하나 = 번호 하나(`T-0001`) = 문서 한 장(`docs/작업/`) + 저장소별 워크트리(`.work/<번호-제목>/<저장소>`)가 된다.
+사람이 치는 명령은 여는 것과 닫는 것 둘이다. 단계를 체크하지 않는다.
+
+| 하고 싶은 것 | 명령 |
+| --- | --- |
+| 열기 | `python3 harness/scripts/work.py new <제목> <저장소 키…>` |
+| 상태 · 누구 차례 | `python3 harness/scripts/work.py` (세션 시작 줄에도 나온다) |
+| 닫기(병합 뒤) | `python3 harness/scripts/work.py done <번호>` |
+
+- 상태는 git 에서 계산한다: 열림(커밋 없음) → 작업중(기준에 없는 커밋) → 병합됨(브랜치 끝이 기준에 들어감) → 닫힘(문서가 `완료/` 로).
+- 하네스에 원격이 있으면 번호를 받자마자 문서를 push 해서 잡는다. 남이 먼저 올렸으면 다음 번호로 다시 받는다.
+- squash · rebase 병합은 끝 커밋이 바뀌어 「병합됨」으로 잡히지 않는다. 확인한 뒤 `done --force`.
+- 접두어 · 폴더 · 브랜치 모양은 `harness.json` 의 `workflow` 칸(`prefix` · `dir` · `branch`)에서 바꾼다.
 
 ### 🧩 작업자 실행 방식
 

@@ -38,9 +38,9 @@ class PackConfig(unittest.TestCase):
         self.assertEqual(hl.default_config()["packs"], [])
 
     def test_missing_packs_keeps_old_behavior(self):
-        """packs 칸이 없던 옛 설정은 예전처럼 전부 켠 것으로 읽는다(갱신으로 동작이 바뀌지 않게)."""
+        """packs 칸이 없던 옛 설정은 그때 있던 묶음을 켠 것으로 읽는다(갱신으로 동작이 바뀌지 않게). workflow 는 그때 없었다."""
         c = hl.normalize({"project": {"name": "P", "slug": "p"}})
-        self.assertEqual(c["packs"], list(hl.PACKS))
+        self.assertEqual(c["packs"], list(hl.LEGACY_PACKS))
 
     def test_validate(self):
         self.assertTrue(any("packs" in e for e in hl.validate(cfg_with(packs=["tmux"]))))
@@ -86,7 +86,7 @@ class PackFiles(unittest.TestCase):
         target = self.build(None)
         path = target / "harness.json"
         data = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(data["packs"], list(hl.PACKS), "packs 없던 설정은 전부 켠 것으로 적힌다")
+        self.assertEqual(data["packs"], list(hl.LEGACY_PACKS), "packs 없던 설정은 그때 있던 묶음 전부로 적힌다")
         data.pop("packs")
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         r = subprocess.run([sys.executable, str(target / "harness" / "scripts" / "generate.py"), "--root", str(target)],
@@ -94,12 +94,12 @@ class PackFiles(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         data = json.loads(path.read_text(encoding="utf-8"))
         keys = list(data)
-        self.assertEqual(data["packs"], list(hl.PACKS))
+        self.assertEqual(data["packs"], list(hl.LEGACY_PACKS))
         self.assertEqual(keys.index("packs"), keys.index("engines") + 1)
 
     def test_detail_asks_packs(self):
         answers = "\n".join(["Ops", "ops", "", "", "", "1", "orchestrator", "main", "",
-                             "y", "y", "y", "y", "1", "1", "y"]) + "\n"
+                             "y", "y", "y", "y", "1", "1", "n", "y"]) + "\n"
         r = self.sb.bootstrap("run", "--detail", "--offline", "--skip-install", input_text=answers, cwd=self.sb.tmp)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("cleanup:", r.stdout)

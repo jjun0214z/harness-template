@@ -45,8 +45,11 @@ MANAGED_SKILLS = ("setup", "start")
 PROCEDURE_SKILLS = ("absolute-rules", "work-method", "git-rules", "deploy", "task-brief")
 FILL_SKILLS = ("code-convention", "security-privacy", "operations", "design")
 # 고른 것만 붙는 선택 묶음. 고르지 않으면 파일 · 훅 · 자동 동작이 생기지 않는다
-PACKS = ("cleanup", "codex-desktop")
+PACKS = ("workflow", "cleanup", "codex-desktop")
+LEGACY_PACKS = ("cleanup", "codex-desktop")  # packs 칸이 없던 옛 설정이 켜고 있던 것(그때 없던 workflow 는 뺀다)
+PACK_DEFAULT = {"workflow": True}  # 셋업 질문의 기본 답. 없으면 넣지 않음
 PACK_INFO = {
+    "workflow": "작업 번호(T-0001) · 저장소별 워크트리 · git 으로 계산하는 상태 (work.py new · done)",
     "cleanup": "작업 정리 때 임시 찌꺼기(Claude 임시 폴더 · 크롬 복제본 · /tmp 검수 찌꺼기)도 지운다 (macOS · Linux)",
     "codex-desktop": "Codex 세션을 데스크톱 앱 프로젝트에 귀속 · 끝난 Codex 세션 보관 (Codex 를 고른 경우)",
 }
@@ -84,6 +87,7 @@ def default_config() -> dict:
         "engines": ["claude"],
         "runner": runners.DEFAULT_RUNNER,
         "packs": [],
+        "workflow": {"prefix": "T", "dir": "docs/작업", "branch": "feature/{id}-{slug}"},
         "orca": {"workspaces_dir": "~/orca/workspaces"},
         "labels": list(DEFAULT_LABELS),
         "platform": {"python": ""},
@@ -204,6 +208,14 @@ def validate(cfg: dict) -> List[str]:
     packs = cfg.get("packs")
     if not isinstance(packs, list) or any(x not in PACKS for x in packs) or len(set(packs)) != len(packs):
         errs.append(f"packs 는 {' · '.join(PACKS)} 중에서 고른 목록이다")
+    wf = cfg.get("workflow") or {}
+    if not re.fullmatch(r"[A-Z]{1,6}", str(wf.get("prefix", ""))):
+        errs.append("workflow.prefix 는 영문 대문자 1~6자다(예: T)")
+    d = str(wf.get("dir", ""))
+    if not d or d.startswith(("/", "..")) or ".." in d.split("/"):
+        errs.append("workflow.dir 은 하네스 안의 상대 경로다(예: docs/작업)")
+    if "{id}" not in str(wf.get("branch", "")):
+        errs.append("workflow.branch 에는 {id} 가 들어가야 한다(예: feature/{id}-{slug})")
     if cfg.get("runner") not in runners.RUNNERS:
         errs.append(f"runner 는 {' · '.join(runners.RUNNERS)} 중 하나다")
     return errs
@@ -233,7 +245,7 @@ def migrate_raw(raw: dict) -> dict:
     """옛 설정을 지금 모양으로. orca.enabled → runner, packs 칸이 없던 설정 → 예전처럼 묶음 전부(동작을 바꾸지 않는다)."""
     out = runners.migrate(raw)
     if "packs" not in out:
-        out["packs"] = list(PACKS)
+        out["packs"] = list(LEGACY_PACKS)
     return out
 
 

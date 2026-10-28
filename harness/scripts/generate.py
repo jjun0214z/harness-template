@@ -79,6 +79,43 @@ def tracker_text(cfg: dict, labels: str) -> Dict[str, str]:
     }
 
 
+def workflow_text(cfg: dict) -> Dict[str, str]:
+    """workflow 묶음을 켰으면 세션 시작 · 상태 기록 문장을 작업 흐름으로 바꾼다. 끄면 아무것도 덮지 않는다."""
+    if not hl.has_pack(cfg, "workflow"):
+        return {}
+    py, wf = cfg["platform"]["python"], cfg["workflow"]
+    cmd = f"{py} harness/scripts/work.py"
+    return {
+        "session_open": f"`{cmd}` 로 열린 작업과 누구 차례인지부터 본다(세션 시작 줄에도 한 줄로 나온다)",
+        "status_step": (f"작업은 `{cmd} new <제목> <저장소 키…>` 로 연다(번호 · 문서 한 장 · 저장소별 워크트리). "
+                        f"상태는 사람이 체크하지 않는다: `{cmd}` 가 git 에서 계산한다(열림 → 작업중 → 병합됨). "
+                        f"병합되면 `{cmd} done <번호>` 로 닫는다"),
+        "board_row": (f"| `{wf['dir']}/` | **작업 문서.** 번호 하나 = 한 장(목표 · 완료 조건 · 메모). 닫으면 `{wf['dir']}/완료/` 로 간다. "
+                      f"상태는 `{cmd}` |\n"
+                      "| `상황판.md` | 지금 집중하는 것 한 장(선택). 작업 목록과 상태는 `work.py` 가 갖는다 |"),
+    }
+
+
+def workflow_readme(cfg: dict) -> str:
+    py, wf = cfg["platform"]["python"], cfg["workflow"]
+    cmd = f"{py} harness/scripts/work.py"
+    return f"""# 작업 문서
+
+작업 하나 = 번호 하나(`{wf['prefix']}-0001`) = 이 폴더의 문서 한 장 + 저장소별 워크트리(`.work/<번호-제목>/<저장소>`).
+
+| 하고 싶은 것 | 명령 |
+| --- | --- |
+| 작업 열기 | `{cmd} new <제목> <저장소 키…>` |
+| 지금 상태 · 누구 차례 | `{cmd}` |
+| 저장소 더하기 | `{cmd} add <번호> <저장소 키…>` |
+| 닫기(병합 뒤) | `{cmd} done <번호>` |
+
+- 상태는 적지 않는다. git 이 말한다: 열림 → 작업중 → 병합됨 → 닫힘(`완료/` 로 이동).
+- 문서에는 목표 · 완료 조건 · 메모만 쓴다. 빈 칸이 있어도 진행을 막지 않는다.
+- 머리의 `대상 저장소` · `브랜치` · `시작점` 줄은 `work.py` 가 읽는다. 손으로 바꾸지 않는다.
+"""
+
+
 def context(cfg: dict) -> Dict[str, str]:
     p, h = cfg["project"], cfg["harness_repo"]
     py = cfg["platform"]["python"]  # 안내 명령의 파이썬(mac · Linux python3, Windows py -3 등)
@@ -114,6 +151,7 @@ def context(cfg: dict) -> Dict[str, str]:
         "engine_cmds": " 또는 ".join(f"`{e}`" for e in cfg["engines"]),
     }
     ctx.update(tracker_text(cfg, labels))
+    ctx.update(workflow_text(cfg))
     return ctx
 
 
@@ -313,6 +351,9 @@ def core_md(cfg: dict, ctx: Dict[str, str]) -> str:
     ask = [f"`{r['dir']}` `{b}`" for r in cfg["repos"] for b in r["ask_on_push"]]
     ask_line = (f"- 매번 {owner}께 묻는 push: {' · '.join(ask)} (훅이 묻는다)." if ask else f"- 매번 묻는 push 는 설정에 없다(`harness.json` repos[].ask_on_push).")
     engine = runners.core_line(cfg)
+    if hl.has_pack(cfg, "workflow"):
+        engine += (f"\n- 작업은 `{cfg['platform']['python']} harness/scripts/work.py new <제목> <저장소 키…>` 로 열고, "
+                   "병합되면 `work.py done <번호>` 로 닫는다. 상태 · 누구 차례는 `work.py` 가 git 에서 계산한다(체크하지 않는다).")
     skills = ["start"] + [s for s in hl.PROCEDURE_SKILLS] + list(cfg["skills"]["fill"])
     when = {"start": "설치 직후 · 「시작해」 · 「뭐부터 해」 · 「다음 뭐야」 (지금 할 것 한 개를 고른다)",
             "absolute-rules": "모든 작업 시작 전 · 새 지시가 기준을 건드릴 때", "work-method": "재거나 판정 · 보고하기 전",
@@ -766,6 +807,8 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
     w.seed("README.md", readme_md(cfg, ctx))
     w.seed_blocks("상황판.md", board_md(cfg, ctx), legacy=legacy_blocks(LEGACY_BOARD, lctx))
     w.seed_blocks("docs/기록/README.md", records_readme(cfg, ctx), legacy=legacy_blocks(LEGACY_RECORDS, lctx))
+    if hl.has_pack(cfg, "workflow"):
+        w.seed(f"{cfg['workflow']['dir']}/README.md", workflow_readme(cfg))
 
     # 설정이 바뀌어 필요 없어진 관리 파일 지우기
     # 이 하네스가 새로 만든 코드 저장소: 폴더 → 첫 커밋 SHA(아직 커밋 전이면 빈 문자열). 남의 저장소 판별에 쓴다

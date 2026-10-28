@@ -5,6 +5,7 @@ SessionStart: 원격에서 fast-forward 로만 받아온다. 다른 기기에서
   추적 브랜치가 없으면(새 워크트리 · 아직 push 전) 조용히 건너뛴다.
   받은 커밋이 규칙(harness.json rules.protected)을 건드렸으면 **바뀐 파일 이름을 대고** 알린다.
   「문서가 바뀌었을 수 있다」로 뭉뚱그리면 세션이 옛 절차를 그대로 쓴다.
+  workflow 묶음을 켰으면 열린 작업과 누구 차례를 한 줄로 알린다(work.py --brief, 원격이 없어도).
 Stop: 공유 체크아웃에 커밋 안 된 변경이나 push 안 된 커밋이 남아 있으면 막고 커밋·push 를 요구한다.
   격리 워크트리(작업자 자리)는 push 하지 않는 것이 규칙이라 커밋 안 된 변경만 막는다.
   **같은 세션에서 같은 상태로는 한 번만 막는다.** Stop 은 턴마다 돌아서, 매번 막으면 읽히지 않고 넘겨진다.
@@ -54,18 +55,36 @@ def is_rule_file(path, prot):
 
 
 def session_start(root):
-    if not upstream(root):
-        sys.exit(0)
-    _, before, _ = git(root, "rev-parse", "HEAD")
-    code, _, err = git(root, "pull", "--ff-only", "--quiet")
-    if code != 0:
-        print(f"[하네스 동기화] 원격 하네스를 받지 못했다 (fast-forward 불가 또는 네트워크): {err[:200]}. "
-              "작업 전에 `git status` 와 `git log --oneline @{u}...HEAD` 를 확인한다.")
-        sys.exit(0)
-    _, after, _ = git(root, "rev-parse", "HEAD")
-    if before and after and before != after:
-        print(received_line(root, before, after))
+    if upstream(root):
+        _, before, _ = git(root, "rev-parse", "HEAD")
+        code, _, err = git(root, "pull", "--ff-only", "--quiet")
+        if code != 0:
+            print(f"[하네스 동기화] 원격 하네스를 받지 못했다 (fast-forward 불가 또는 네트워크): {err[:200]}. "
+                  "작업 전에 `git status` 와 `git log --oneline @{u}...HEAD` 를 확인한다.")
+        else:
+            _, after, _ = git(root, "rev-parse", "HEAD")
+            if before and after and before != after:
+                print(received_line(root, before, after))
+    work_line(root)
     sys.exit(0)
+
+
+def work_line(root):
+    """workflow 묶음이면 열린 작업 한 줄. 느리거나 깨져도 세션을 막지 않는다."""
+    try:
+        with open(os.path.join(root, "harness.json"), encoding="utf-8") as f:
+            packs = json.load(f).get("packs")
+    except (OSError, ValueError, AttributeError):
+        return
+    script = os.path.join(root, "harness", "scripts", "work.py")
+    if not isinstance(packs, list) or "workflow" not in packs or not os.path.isfile(script):
+        return
+    try:
+        r = subprocess.run([sys.executable, script, "--root", root, "--brief"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if r.stdout.strip():
+        print(r.stdout.strip())
 
 
 def received_line(root, before, after):

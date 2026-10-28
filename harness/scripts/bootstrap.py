@@ -308,7 +308,7 @@ def interview(kind: str, reader: Callable[[str], str] = input, default_root=None
     cfg["runner"] = runners.from_choice(ask(runners.QUESTION + note, "1", reader))
     say("선택 묶음 (고른 것만 붙는다. Enter = 넣지 않음)")
     cfg["packs"] = [k for k in hl.PACKS if (k != "codex-desktop" or "codex" in cfg["engines"])
-                    and ask_yes(f"  {k}: {hl.PACK_INFO[k]}", False, reader, on_eof=False)]
+                    and ask_yes(f"  {k}: {hl.PACK_INFO[k]}", hl.PACK_DEFAULT.get(k, False), reader, on_eof=False)]
     return hl.normalize(cfg)
 
 

@@ -16,6 +16,7 @@ description: 설치 다음 한 걸음을 정해 준다. 사용자가 「시작�
 | 하네스 원격 | `harness.json` 의 `harness_repo.remote` |
 | 채울 자리 남음 | `harness.json` `skills.fill` 에 든 스킬(`plugins/{{slug}}/skills/<이름>/SKILL.md`)에 `채울 자리` 주석이 남아 있는지 |
 | 어디까지 왔나 | `상황판.md` 「지금 집중」 체크리스트 |
+| 열린 작업(workflow 묶음을 켰으면) | `{{py}} harness/scripts/work.py` (누구 차례까지 계산해 준다) |
 
 ## 2. 위에서 처음 걸리는 하나만 제안한다
 
