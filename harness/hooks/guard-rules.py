@@ -11,15 +11,18 @@
 격리 워크트리 판정(세션 root 가 아니라 쓰는 대상 파일 기준):
 1. 대상 경로가 `<하네스>/.claude/worktrees/` 또는 `<프로젝트 폴더>/.work/` 아래다.
 2. 대상이 속한 git 작업 트리가 링크된 워크트리다(`git rev-parse --git-dir` != `--git-common-dir`).
-Bash 는 핵심 경로가 쓰기 대상일 때만 묻는다. 명령 문자열을 보고 추정하므로 완벽한 판정은 아니다.
+Bash 는 핵심 경로가 쓰기 대상일 때만 묻는다. 명령은 shellwords 로 읽는다(`cd X &&` · `sh -c` · `$(…)` · heredoc).
+위치를 알 수 없는 쓰기(`cd $X && …`)나 따옴표가 깨진 명령은 핵심 경로를 언급하면 묻는다. 완벽한 판정은 아니다.
 Codex 는 permissionDecision=ask 를 지원하지 않아 systemMessage 경고로 대신한다.
 """
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import shellwords  # noqa: E402  같은 폴더
 
 DEFAULT_PROTECTED = ("CLAUDE.md", "AGENTS.md", "harness.json", ".claude/", ".claude-plugin/", ".codex/", ".agents/", "plugins/", "harness/")
 
@@ -42,7 +45,6 @@ PROTECTED, OWNER = load_settings()
 # 쓰기 명령: 인자 중 핵심 경로가 있으면 묻는다. 읽기 명령(ls · cat · grep · find · git log 등)은 묻지 않는다.
 WRITE_CMDS = {"tee", "mv", "cp", "rm", "truncate", "ln", "touch", "mkdir", "rmdir", "install", "rsync", "patch"}
 INLINE_CMDS = {"python", "python3", "perl", "node", "ruby"}  # 한 줄 코드가 핵심 경로를 다루면 묻는다
-REDIRECT = re.compile(r"(?<![0-9&])>>?\s*[\"']?([^\s;|&\"')]+)")
 PATCH_FILE = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", re.M)
 PATH_TOKEN = re.compile(r"[^\s\"'(),;=]+")
 WHERE = f"규칙 변경은 격리 워크트리에서 하고, 기준 브랜치에 올릴 때 {OWNER} 확인을 거친다."
@@ -134,35 +136,51 @@ class Judge:
         return is_protected(os.path.relpath(abspath, top))
 
 
-def bash_writes_protected(judge, base, cmd):
-    # 명령이 && ; | 로 이어져 있을 수 있어 조각마다 본다. 앞 조각의 cd 는 뒤 조각의 위치를 바꾼다.
-    for part in re.split(r"&&|\|\||;|\|", cmd):
-        try:
-            tokens = shlex.split(part)
-        except ValueError:
-            tokens = part.split()
-        if not tokens:
-            continue
-        if tokens[0] == "cd" and len(tokens) >= 2:
-            base = judge.resolve(base, tokens[1])
-            continue
-        # 리다이렉트 대상이 핵심 경로인가 (2>&1 · 2>/dev/null 같은 것은 대상이 아니다)
-        for target in REDIRECT.findall(part):
-            if target != "/dev/null" and mentions(target) and judge.protected(judge.resolve(base, target)):
+def writes_protected(judge, base, args, redirs):
+    """단순 명령 하나(위치 base)가 공유 체크아웃의 핵심 경로를 쓰는가."""
+    for op, target in redirs:
+        if ">" in op and target and target != "/dev/null" and not target.startswith("&") \
+                and mentions(target) and judge.protected(judge.resolve(base, target)):
+            return True
+    if not args:
+        return False
+    head, rest = os.path.basename(args[0]), args[1:]
+    if head == "git" and rest[:1] in (["mv"], ["rm"], ["checkout"], ["restore"]):
+        head, rest = "mv", rest[1:]
+    if head == "sed" and any(a.startswith("-i") for a in rest):
+        head = "mv"
+    if head in WRITE_CMDS:
+        for a in rest:
+            a = a.split("=")[-1]
+            if mentions(a) and judge.protected(judge.resolve(base, a)):
                 return True
-        head = os.path.basename(tokens[0])
-        args = tokens[1:]
-        if head == "git" and args[:1] in (["mv"], ["rm"], ["checkout"], ["restore"]):
-            head, args = "mv", args[1:]
-        if head == "sed" and any(a.startswith("-i") for a in args):
-            head = "mv"
-        if head in WRITE_CMDS:
-            for a in args:
-                a = a.strip("\"'").split("=")[-1]
-                if mentions(a) and judge.protected(judge.resolve(base, a)):
+    if head in INLINE_CMDS:
+        text = " ".join(rest)
+        if mentions(text) and re.search(r"open\(|write|unlink|rename|replace", text):
+            for t in PATH_TOKEN.findall(text):
+                if mentions(t) and judge.protected(judge.resolve(base, t)):
                     return True
-        if head in INLINE_CMDS and mentions(part) and re.search(r"open\(|write|unlink|rename|replace", part):
-            for t in PATH_TOKEN.findall(part):
+    return False
+
+
+def bash_writes_protected(judge, base, cmd):
+    try:
+        steps = list(shellwords.walk(cmd, base))
+    except ValueError:
+        return True  # 따옴표가 깨졌다: 핵심 경로를 언급한 명령이라 묻는다(부르는 쪽이 mentions 를 먼저 봤다)
+    for wheres, args, redirs in steps:
+        for where in wheres:
+            if where is None:
+                if any(mentions(a) for a in args) or any(mentions(t) for _, t in redirs):
+                    return True  # 위치를 모르는 곳에서 핵심 경로를 다룬다
+                continue
+            if writes_protected(judge, where, args, redirs):
+                return True
+    # heredoc 을 코드로 받는 명령(python3 - <<EOF · sh <<EOF)은 본문이 핵심 경로를 쓰는지 본다
+    for header, body in shellwords.heredocs(cmd):
+        if mentions(body) and re.search(r"open\(|write|unlink|rename|replace|>", body) \
+                and re.search(r"(?:^|[\s;&|(])(?:python[0-9.]*|perl|ruby|node|sh|bash|zsh)\b", header):
+            for t in PATH_TOKEN.findall(body):
                 if mentions(t) and judge.protected(judge.resolve(base, t)):
                     return True
     return False

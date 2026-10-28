@@ -258,7 +258,7 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
 | `harness.json` | **설정 원본 한 장.** 저장소 목록 · 엔진 · 작업자 실행 방식(`runner`). 바꾼 뒤 `{cfg['platform']['python']} harness/scripts/generate.py`. 저장소 추가는 `{cfg['platform']['python']} harness/scripts/bootstrap.py add-repo` |
 | `CLAUDE.md` · `AGENTS.md` | 공통 지침과 Codex 진입점. `AGENTS.md` 는 이 파일을 읽게만 한다 |
 | 플러그인 `{slug}` (`plugins/{slug}/`) | 모든 저장소와 엔진이 같이 쓰는 스킬 · 작업자 · 안전 훅(push 가드) |
-| `harness/hooks/` | 이 저장소 전용 훅: 규칙 파일 보호 · 원격 하네스 동기화 |
+| `harness/hooks/` | 이 저장소 전용 훅: 규칙 파일 보호 · 원격 하네스 동기화(바뀐 규칙 이름 알림) · 고친 뒤 할 일 알림 |
 | `harness/scripts/` | 셋업(`bootstrap.py`) · 생성기(`generate.py`) · 작업자 정리(`finish_worker.py`) · 작업 공간 정리(`cleanup_worktrees.py`) |
 {ctx['tracker_row']}
 | `docs/기록/` | 결정의 근거 원본. {ctx['record_from']} |
@@ -586,7 +586,7 @@ def plugin_hooks(cfg: dict) -> dict:
 
 
 def plugin_scripts(cfg: dict) -> List[str]:
-    names = ["guard-push.py", "core-context.py"]
+    names = ["guard-push.py", "shellwords.py", "core-context.py"]
     if hl.has(cfg, "codex"):
         names += ["codex-bind-session.py", "codex_project_binding.py"]
         if runners.is_orca(cfg):
@@ -604,6 +604,8 @@ def claude_settings(cfg: dict) -> dict:
                             "hooks": [{"type": "command", "command": cmd("guard-rules.py")}]}],
             "SessionStart": [{"matcher": "startup|resume", "hooks": [{"type": "command", "command": cmd("harness-sync.py")}]}],
             "Stop": [{"hooks": [{"type": "command", "command": cmd("harness-sync.py")}]}],
+            "PostToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit",
+                             "hooks": [{"type": "command", "command": cmd("remind-check.py")}]}],
         },
         "enabledPlugins": {f"{slug}@{slug}": True},
     }
@@ -620,6 +622,7 @@ def codex_hooks(cfg: dict) -> dict:
         "PreToolUse": [{"matcher": "Bash|apply_patch", "hooks": [{"type": "command", "command": cmd("guard-rules.py")}]}],
         "SessionStart": [{"matcher": "startup|resume", "hooks": [{"type": "command", "command": cmd("harness-sync.py")}]}],
         "Stop": [{"hooks": [{"type": "command", "command": cmd("harness-sync.py")}]}],
+        "PostToolUse": [{"matcher": "apply_patch", "hooks": [{"type": "command", "command": cmd("remind-check.py")}]}],
     }}
 
 

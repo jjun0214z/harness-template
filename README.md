@@ -154,7 +154,7 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | `AGENTS.md` | Codex 진입점(CLAUDE.md 를 읽게만) | 설정대로 |
 | `plugins/<슬러그>/` | 공통 플러그인: push 가드 훅 · 핵심 요약 · 작업자(`<키>-worker`) · 조사원 · 검토원 | 설정대로 (`core.md` 는 관리 블록만) |
 | `plugins/<슬러그>/skills/` | 규칙 스킬(아래 표) | **없을 때만 만든다.** 단 관리 블록은 다시 맞춘다 |
-| `harness/` | 셋업 엔진 · 생성기 · 저장소 훅(규칙 보호 · 하네스 동기화) · 작업 공간 정리 | `update` 로 템플릿에서 |
+| `harness/` | 셋업 엔진 · 생성기 · 저장소 훅(규칙 보호 · 하네스 동기화 · 고친 뒤 할 일 알림) · 작업 공간 정리 | `update` 로 템플릿에서 |
 | `README.md` · `상황판.md` | 설치한 사람용 안내 한 장 · 지금 집중과 남은 준비 체크리스트 | 없을 때만 |
 
 <details><summary>생성물 전체 표</summary>
@@ -168,7 +168,7 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | `.claude/settings.json` · `.claude-plugin/marketplace.json` | Claude 를 골랐을 때 | 설정대로 |
 | `.codex/hooks.json` · `.codex/agents/*.toml` · `.agents/plugins/marketplace.json` | Codex 를 골랐을 때 | 설정대로 |
 | `scripts/orca-*.sh` | Orca 를 골랐을 때(bash) | 설정대로 |
-| `harness/` | 셋업 엔진 · 생성기 · 저장소 훅(규칙 보호 · 하네스 동기화) · 작업 공간 정리 | `update` 로 템플릿에서 |
+| `harness/` | 셋업 엔진 · 생성기 · 저장소 훅(규칙 보호 · 하네스 동기화 · 고친 뒤 할 일 알림) · 작업 공간 정리 | `update` 로 템플릿에서 |
 | `README.md` | 설치한 사람용 안내 한 장(「하고 싶은 것 → 이렇게 말한다」) | 없을 때만 |
 | `상황판.md` | 지금 집중과 남은 준비 체크리스트 | 없을 때만 |
 | `docs/기록/README.md` | 근거 기록 규칙 | 없을 때만 |
@@ -186,6 +186,20 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 
 「없을 때만」인 스킬도 설정에서 만든 표(저장소 지도 · 배포 · 검사 명령 · 맡기는 방법)는 관리 블록이라 다시 생성할 때 맞춘다.
 블록 밖(사람이 채운 본문)은 그대로 둔다.
+
+### 훅이 하는 일
+
+막는 것은 되돌리기 어려운 것뿐이다. 나머지는 알리기만 하고, 같은 말은 한 세션에 한 번만 한다.
+
+| 훅 | 언제 | 하는 일 |
+| --- | --- | --- |
+| push 가드(플러그인) | push 직전 | 강제 push 는 막는다. 설정한 브랜치 · 규칙 변경이 든 하네스 기준 브랜치 push 는 묻는다. 어디로 가는 push 인지 모르면 묻는다 |
+| 규칙 보호 | 파일 쓰기 직전 | 공유 체크아웃의 규칙 파일 쓰기는 묻는다. 격리 워크트리에서는 묻지 않는다 |
+| 하네스 동기화 | 세션 시작 | 원격을 fast-forward 로만 받는다. 규칙이 바뀌었으면 바뀐 파일 이름을 댄다 |
+| 〃 | 턴 끝 | 커밋 · push 안 한 하네스 변경이 있으면 막는다. 같은 세션 · 같은 상태로는 한 번만 |
+| 고친 뒤 할 일 | 파일을 고친 뒤 | `harness.json` 이면 생성기, 훅 · 플러그인이면 점검(doctor)을 알린다 |
+
+push 가드와 규칙 보호는 같은 명령 해석기(`shellwords.py`)를 쓴다. `cd X &&` · `sh -c '…'` · `$(…)` · heredoc 을 풀어서 본다.
 
 ## 🔧 설정
 
