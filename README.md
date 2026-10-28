@@ -276,15 +276,16 @@ push 가드와 규칙 보호는 같은 명령 해석기(`shellwords.py`)를 쓴�
 
 프로젝트 이름(`project.name`)과 호칭(`project.owner_title`)은 규칙 스킬의 머리말(YAML)과 본문에도 들어간다.
 그 자리는 관리 블록으로 감쌀 수 없다(머리말 안에는 주석을 넣을 수 없다).
-**그래서 이름이나 호칭을 바꾸고 생성기를 돌려도 아래는 낡은 채 남는다. 직접 고친다.**
+**그래서 이름이나 호칭을 바꾸고 생성기를 돌려도 아래는 낡은 채 남는다. 생성기와 `doctor` 가 그 자리를 찾아 알려 주고, 고치는 것은 사람이 한다.**
 
 | 무엇을 바꿨나 | 낡는 자리 (하네스 폴더 안) |
 | --- | --- |
 | 프로젝트 이름 | `README.md` 제목, 규칙 스킬 5개의 `description:` (absolute-rules · code-convention · design · operations · security-privacy) |
 | 호칭 | 규칙 스킬 6개 본문 11줄 (absolute-rules 3 · deploy 3 · task-brief 2 · code-convention 1 · security-privacy 1 · work-method 1) |
 
-**`doctor` 는 이것을 알리지 않는다.** 관리 블록만 보고 「설정에서 만드는 표가 모두 최신이다」라고 한다.
-옛 이름 · 옛 호칭으로 `grep -rn` 해서 남은 자리를 직접 찾아 고친다.
+- 생성기는 직전 이름 · 호칭을 생성 기록(`.harness-manifest.json`)에 남겨 두고, 바뀌었으면 남은 자리를 `파일:줄` 로 찍는다.
+- `doctor` 의 「낡은 이름 · 호칭」 줄이 남은 곳 수를 보이고 「나중에 할 일」에 목록을 적는다.
+- 다 고치면 그 옛 이름은 더 찾지 않는다. 두 글자 미만인 이름은 오탐이 많아 찾지 않는다.
 
 </details>
 

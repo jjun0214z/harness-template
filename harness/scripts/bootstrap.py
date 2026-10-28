@@ -1039,6 +1039,11 @@ def doctor(target: Path, kind: str, offline: bool, rep: Optional[Report] = None,
     except (OSError, ValueError, KeyError):
         rep.add("생성물", "실패", "생성 기록이 없다. generate 를 돌린다")
     blocks_step(cfg, target, rep)
+    stale = gen.stale_from_manifest(target, cfg)
+    rep.add("낡은 이름 · 호칭", "안내" if stale else "통과",
+            f"{len(stale)}곳 남음" if stale else "바꾼 이름 · 호칭이 남은 자리 없음")
+    if stale:
+        rep.todo("\n".join(gen.stale_lines(stale)))
     hook_smoke(cfg, target, rep)
     parent = hl.git_common_parent(target) or target.parent
     record = created_record(target)
@@ -1384,6 +1389,8 @@ def cmd_generate(args) -> int:
     w = gen.generate(cfg, target)
     say(f"생성: 바뀐 파일 {len(w.changed)} · 사람이 채운 파일 유지 {len(w.kept)}")
     for line in gen.block_lines(w):
+        say(line)
+    for line in gen.stale_lines(getattr(w, "stale_names", [])):
         say(line)
     return 0
 

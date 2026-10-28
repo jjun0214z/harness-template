@@ -709,6 +709,8 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
     pdir = f"plugins/{slug}"
     produced: List[str] = []
     old, repos, protected, made_here, engine_prev = [], {}, [], created_harness, []
+    prev_names: Dict[str, str] = {}
+    old_names: List[str] = []
     mpath = root / MANIFEST
     first = not mpath.is_file()
     if not first:
@@ -718,6 +720,8 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
             protected = list(prev.get("protected") or [])
             made_here = made_here or bool(prev.get("created_harness"))
             engine_prev = list(prev.get("engine") or [])
+            prev_names = dict(prev.get("names") or {})
+            old_names = list(prev.get("old_names") or [])
         except ValueError:
             old = []
     # 처음 생성할 때 이미 있던 파일(기존 폴더 연결 · --force)은 사람 것이다: 덮지 않고 기록해 두고 다음에도 덮지 않는다
@@ -828,11 +832,68 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
                 target.unlink()
     record = {"note": "생성기가 만든 관리 파일 목록과 이 하네스가 만든 저장소. 고치지 않는다.",
               "files": sorted(produced), "repos": dict(sorted(repos.items())), "protected": sorted(w.protect)}
+    names = {"name": cfg["project"]["name"], "owner_title": cfg["project"]["owner_title"]}
+    for k, v in prev_names.items():
+        if v and v != names.get(k) and v not in old_names:
+            old_names.append(v)
+    old_names = [n for n in old_names if n not in names.values()]
+    w.stale_names = [] if dry_run else stale_spots(root, cfg, old_names)
+    record["names"] = names
+    still = sorted({word for _, _, word in w.stale_names})
+    if still:  # 남은 자리가 없어진 옛 이름은 더 찾지 않는다
+        record["old_names"] = still
     if made_here:  # bootstrap 이 이 하네스 저장소를 새로 만들었다: 첫 커밋을 미뤘다면 다음 run 이 이어서 만든다
         record["created_harness"] = True
         record["engine"] = sorted(engine_rels)  # 템플릿에서 복사한 엔진 · 진입 래퍼(첫 커밋 대상)
     w.managed(MANIFEST, jdump(record))
     return w
+
+
+STALE_SCAN = ("README.md", "상황판.md", "CLAUDE.md", "docs/기록/README.md")
+
+
+def stale_spots(root: Path, cfg: dict, words: List[str]) -> List[tuple]:
+    """옛 프로젝트 이름 · 호칭이 남은 자리 [(상대 경로, 줄 번호, 낱말)].
+
+    머리말(YAML) · 사람이 채운 본문은 관리 블록으로 감쌀 수 없어 생성기가 다시 쓰지 않는다. 그래서 찾아서 알린다.
+    두 글자 미만인 이름은 오탐이 많아 찾지 않는다."""
+    words = [x for x in words if len(x) >= 2]
+    if not words:
+        return []
+    files = [root / rel for rel in STALE_SCAN]
+    pdir = root / "plugins" / cfg["project"]["slug"]
+    # setup · start 는 생성기가 매번 다시 쓴다(남은 낱말은 「기본값 = 주임님」 같은 설명이다)
+    files += [f for f in sorted(pdir.glob("skills/*/SKILL.md")) if f.parent.name not in ("setup", "start")]
+    files.append(pdir / "core.md")
+    out = []
+    for f in files:
+        if not f.is_file():
+            continue
+        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            for word in words:
+                if word in line:
+                    out.append((f.relative_to(root).as_posix(), i, word))
+    return out
+
+
+def stale_from_manifest(root: Path, cfg: dict) -> List[tuple]:
+    """doctor 용: 생성 기록의 옛 이름으로 지금 남은 자리를 다시 찾는다."""
+    try:
+        prev = json.loads((Path(root) / MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return stale_spots(Path(root), cfg, list(prev.get("old_names") or []))
+
+
+def stale_lines(spots: List[tuple]) -> List[str]:
+    if not spots:
+        return []
+    words = " · ".join(sorted({w for _, _, w in spots}))
+    lines = [f"낡은 이름 · 호칭({words})이 남은 자리 {len(spots)}곳. 생성기가 덮지 않는 곳이라 직접 고친다:"]
+    lines += [f"  {rel}:{n} ({w})" for rel, n, w in spots[:20]]
+    if len(spots) > 20:
+        lines.append(f"  … 외 {len(spots) - 20}곳 (grep -rn 로 찾는다)")
+    return lines
 
 
 def main(argv=None) -> int:
@@ -854,6 +915,8 @@ def main(argv=None) -> int:
     for rel in w.changed:
         print(f"  {rel}")
     for line in block_lines(w):
+        print(line)
+    for line in stale_lines(getattr(w, "stale_names", [])):
         print(line)
     return 0
 
