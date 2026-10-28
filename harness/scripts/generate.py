@@ -541,6 +541,11 @@ def readme_md(cfg: dict, ctx: Dict[str, str]) -> str:
     repos = ", ".join(f"`{r['key']}`" for r in cfg["repos"]) or "없음(아래 「저장소 추가해」로 붙인다)"
     remote = f"`{h['remote']}`" if h.get("remote") else "없음(로컬만. 만들면 이슈 추적 · 라벨이 켜진다)"
     engines = " · ".join({"claude": "Claude", "codex": "Codex"}[e] for e in cfg["engines"])
+    wf = hl.has_pack(cfg, "workflow")
+    say_rows = ("| 일 하나를 시작하고 싶다 | **<제목> 작업 열어** (저장소도 같이 말한다) |\n"
+                "| 어디까지 했는지 · 누구 차례인지 | **작업 상태** |\n"
+                "| 병합까지 끝났다 | **<번호> 닫아** |\n") if wf else ""
+    file_row = (f"| `{cfg['workflow']['dir']}/` | 작업 문서(번호 하나 = 한 장). 상태는 `{py} harness/scripts/work.py` |\n") if wf else ""
     return f"""# {p['name']} 하네스
 
 이 폴더가 **오케스트레이터**입니다. 여기서 {ctx['engine_cmds']} 를 열고 아래 표의 말을 그대로 하시면 됩니다.
@@ -552,7 +557,7 @@ def readme_md(cfg: dict, ctx: Dict[str, str]) -> str:
 | 코드 저장소를 붙이고 싶다 | **저장소 추가해** |
 | 제대로 깔렸는지 보고 싶다 | **점검해** |
 | 처음부터 다시 · 다른 기기에 깔고 싶다 | **셋업해** |
-
+{say_rows}
 ## 지금 상태 (설치할 때 기준)
 
 | 항목 | 값 |
@@ -568,7 +573,7 @@ def readme_md(cfg: dict, ctx: Dict[str, str]) -> str:
 | 파일 | 역할 |
 | --- | --- |
 | `상황판.md` | 지금 집중하는 것 · 남은 준비 한 장 |
-| `CLAUDE.md` | 오케스트레이터 지침 · 저장소 지도 · 일하는 순서 |
+{file_row}| `CLAUDE.md` | 오케스트레이터 지침 · 저장소 지도 · 일하는 순서 |
 | `harness.json` | 설정 원본 한 장(저장소 · 엔진 · 작업자 실행 방식). 고친 뒤 `{py} harness/scripts/generate.py` |
 | `plugins/{p['slug']}/skills/` | 규칙 스킬. 「채울 자리」는 사람이 채운다 |
 | `docs/기록/` | 결정의 근거(명령과 출력, 파일과 줄) |

@@ -198,7 +198,7 @@ class Install(unittest.TestCase):
             self.assertIn(needle, ps)
 
     def test_title_option_reaches_bootstrap(self):
-        """`curl … | bash -s -- --title 팀장님`: run 없이 온 옵션이 bootstrap.py run 까지 가서 호칭 질문을 건너뛴다(이름 · 엔진 · 실행 방식 3개만 묻는다)."""
+        """`curl … | bash -s -- --title 팀장님`: run 없이 온 옵션이 bootstrap.py run 까지 가서 호칭을 묻지 않는다(이름 · 엔진 · 실행 방식 · 작업 흐름 4개를 묻는다)."""
         self.ready_linux()
         src = self.template_repo()
         here = self.sb.tmp / "here"
@@ -208,7 +208,7 @@ class Install(unittest.TestCase):
         r = self.install("--title", "팀장님", "--offline", os_name="linux", **env)
         self.assertNotIn("invalid choice", r.stderr)
         self.assertNotIn("unrecognized arguments", r.stderr)
-        self.assertIn("하네스 셋업 (질문 3개", r.stdout, r.stdout + r.stderr)   # --title 이 닿았다: 호칭은 묻지 않는다
+        self.assertIn("하네스 셋업 (질문 4개", r.stdout, r.stdout + r.stderr)   # run 까지 닿았다(호칭은 원래 묻지 않는다)
         self.assertEqual(r.returncode, 2, "터미널이 없으니 1번 질문에서 멈춘다")
 
     def test_without_git_uses_tarball(self):

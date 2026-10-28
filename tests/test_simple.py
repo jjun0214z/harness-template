@@ -44,15 +44,16 @@ class TwoQuestions(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("이미 만든 하네스를 쓴다", r.stdout)
 
-    def test_title_flag_skips_third_question(self):
-        """--title 을 주면 3번(호칭)을 묻지 않는다: 답 2개 + 확인 Enter 로 끝나고 그 호칭이 들어간다."""
+    def test_title_flag_sets_title(self):
+        """호칭은 묻지 않는다. --title 을 주면 그 호칭이 들어간다."""
         kids = self.sb.tmp / "kids"
         kids.mkdir()
-        r = self.simple(kids, "kids\n\n\n", "--title", "팀장님")
+        r = self.simple(kids, "kids\n\n\n\n", "--title", "팀장님")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertNotIn("3) 호칭", r.stdout)
-        self.assertIn("질문 2개", r.stdout)
+        self.assertNotIn("호칭 [", r.stdout)
+        self.assertIn("질문 3개", r.stdout)
         self.assertIn("호칭 팀장님", r.stdout)
+        self.assertNotIn("바꾸려면 --title", r.stdout)
         cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
         self.assertEqual(cfg["project"]["owner_title"], "팀장님")
         # 이미 만든 하네스를 다시 돌릴 때 --title 은 설정을 바꾸지 않고 알린다
@@ -62,31 +63,47 @@ class TwoQuestions(unittest.TestCase):
         cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
         self.assertEqual(cfg["project"]["owner_title"], "팀장님")
 
-    def test_third_question_enter_is_default_title(self):
+    def test_title_not_asked_and_workflow_defaults_on(self):
         kids = self.sb.tmp / "kids"
         kids.mkdir()
         r = self.simple(kids, "kids\n\n\n\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("질문 3개", r.stdout)
-        self.assertIn("3) 호칭 [주임님]:", r.stdout)
-        self.assertIn("호칭 주임님", r.stdout)
+        self.assertNotIn("호칭 [", r.stdout)
+        self.assertIn("3) 작업 흐름(작업 번호 · 저장소별 워크트리 · git 으로 계산하는 상태)을 쓸까요 (Y/n)", r.stdout)
+        self.assertIn("호칭 주임님(바꾸려면 --title)", r.stdout)
+        self.assertIn("작업 흐름 씀", r.stdout)
         cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
-        self.assertEqual(cfg["project"]["owner_title"], "주임님")
+        self.assertEqual((cfg["project"]["owner_title"], cfg["packs"]), ("주임님", ["workflow"]))
+        self.assertTrue((kids / "orchestrator" / "docs" / "작업" / "README.md").is_file())
+        self.assertIn("**작업 상태**", (kids / "orchestrator" / "README.md").read_text(encoding="utf-8"))
 
-    def test_third_question_answer_sets_title(self):
+    def test_workflow_question_no(self):
         kids = self.sb.tmp / "kids"
         kids.mkdir()
-        r = self.simple(kids, "kids\n\n팀장님\n\n")
+        r = self.simple(kids, "kids\n\nn\n\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
-        self.assertEqual(cfg["project"]["owner_title"], "팀장님")
+        self.assertEqual(cfg["packs"], [])
+        self.assertFalse((kids / "orchestrator" / "docs" / "작업").exists())
+        self.assertNotIn("작업 상태", (kids / "orchestrator" / "README.md").read_text(encoding="utf-8"))
+
+    def test_workflow_flags_skip_question(self):
+        kids = self.sb.tmp / "kids"
+        kids.mkdir()
+        r = self.simple(kids, "kids\n\n\n", "--no-workflow")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("질문 2개", r.stdout)
+        self.assertNotIn("작업 흐름(", r.stdout)
+        cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["packs"], [])
 
     def test_options_without_subcommand_go_to_run(self):
         """한 줄 설치의 `bash -s -- --title 팀장님` 은 run 없이 옵션만 bootstrap.py 에 온다."""
         kids = self.sb.tmp / "kids"
         kids.mkdir()
         r = self.sb.bootstrap("--title", "팀장님", "--offline", "--skip-install", "--no-orca",
-                              input_text="kids\n\n\n", cwd=kids)
+                              input_text="kids\n\n\n\n", cwd=kids)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         cfg = json.loads((kids / "orchestrator" / "harness.json").read_text(encoding="utf-8"))
         self.assertEqual(cfg["project"]["owner_title"], "팀장님")

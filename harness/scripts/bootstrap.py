@@ -216,13 +216,14 @@ def detect_engines(kind: str) -> str:
 
 
 def simple_interview(kind: str, reader: Callable[[str], str] = input, root_fixed: Optional[Path] = None,
-                     runner: Optional[str] = None, title: Optional[str] = None) -> dict:
-    """기본 셋업: 질문 4개(프로젝트 이름 · 엔진 · 작업자 실행 방식 · 호칭) + 요약 확인.
-    --runner · --title 을 주면 그 질문은 묻지 않는다. 나머지는 기본값(자세히는 --detail).
+                     runner: Optional[str] = None, title: Optional[str] = None,
+                     workflow: Optional[bool] = None) -> dict:
+    """기본 셋업: 질문 4개(프로젝트 이름 · 엔진 · 작업자 실행 방식 · 작업 흐름) + 요약 확인.
+    --runner · --workflow/--no-workflow 를 주면 그 질문은 묻지 않는다. 호칭은 묻지 않고 기본값(--title · --detail 로 바꾼다).
     Orca 같은 선택 도구는 사용자가 고를 때만 깔린다(묻지 않고 켜지 않는다)."""
     cfg = hl.default_config()
     p = cfg["project"]
-    n = 2 + (runner is None) + (title is None)
+    n = 2 + (runner is None) + (workflow is None)
     say(f"\n하네스 셋업 (질문 {n}개. 전부 고르려면 --detail)")
     p["name"] = ask("1) 프로젝트 이름", caller_base().name, reader)
     p["slug"] = default_slug(p["name"])
@@ -233,17 +234,21 @@ def simple_interview(kind: str, reader: Callable[[str], str] = input, root_fixed
         runner = runners.from_choice(ask(f"{i}) {runners.QUESTION}", "1", reader))
         i += 1
     cfg["runner"] = runner
-    p["owner_title"] = title or ask(f"{i}) 호칭", hl.DEFAULT_OWNER_TITLE, reader)
+    if workflow is None:
+        workflow = ask_yes(f"{i}) 작업 흐름(작업 번호 · 저장소별 워크트리 · git 으로 계산하는 상태)을 쓸까요",
+                           hl.PACK_DEFAULT["workflow"], reader)
+    cfg["packs"] = ["workflow"] if workflow else []
+    p["owner_title"] = title or hl.DEFAULT_OWNER_TITLE
     root = root_fixed or project_root(None, cfg)
     engines = " · ".join({"claude": "Claude", "codex": "Codex"}[e] for e in cfg["engines"])
-    orca = f"작업자 {runners.label(cfg)}"
+    orca = f"작업자 {runners.label(cfg)} · 작업 흐름 {'씀' if workflow else '안 씀'}"
     problem = root_problem(root, cfg, False)
     if problem:
         say("\n" + problem)
         ans = ask("  다른 경로 입력 · Enter 또는 n = 그만", "", reader)
     else:
         ans = ask(f"\n여기에 만듭니다: {root} · 엔진 {engines} · 저장소는 나중에(add-repo) · {orca}"
-                  f" · 호칭 {p['owner_title']}\n"
+                  f" · 호칭 {p['owner_title']}{'' if title else '(바꾸려면 --title)'}\n"
                   "  Enter = 진행 · 다른 경로를 치면 그 폴더에 · n = 그만", "", reader)
     while True:
         if ans.lower() in ("n", "no", "아니오") or (problem and not ans):
@@ -1148,7 +1153,8 @@ def load_or_ask(args, kind: str) -> dict:
         cfg = interview(kind, default_root=None if (args.root or args.target) else project_root, title=title)
     else:
         fixed = Path(args.target).expanduser().resolve().parent if args.target else (Path(args.root).expanduser().resolve() if args.root else None)
-        cfg = simple_interview(kind, root_fixed=fixed, runner=chosen_runner(args), title=title)
+        cfg = simple_interview(kind, root_fixed=fixed, runner=chosen_runner(args), title=title,
+                               workflow=getattr(args, "workflow", None))
     chosen = cfg.pop("_root", None)
     if chosen and not args.target:
         args.root = chosen
@@ -1415,6 +1421,8 @@ def main(argv=None) -> int:
     p.add_argument("--runner", choices=runners.RUNNERS,
                    help=f"작업자 실행 방식(기본: {runners.DEFAULT_RUNNER}). 주면 그 질문을 묻지 않는다. orca 를 고를 때만 Orca 를 설치한다")
     p.add_argument("--no-orca", action="store_true", help=argparse.SUPPRESS)  # 옛 옵션: --runner subagent 와 같다
+    p.add_argument("--workflow", dest="workflow", action="store_true", default=None, help="작업 흐름 묶음을 쓴다(질문을 건너뜀)")
+    p.add_argument("--no-workflow", dest="workflow", action="store_false", help="작업 흐름 묶음을 쓰지 않는다(질문을 건너뜀)")
     p.add_argument("--title", "--owner-title", dest="title",
                    help=f"결정권자를 부르는 호칭(기본: {hl.DEFAULT_OWNER_TITLE}). 새로 셋업할 때만 쓴다. 이미 만든 하네스는 harness.json 을 고친다")
     for name in ("check", "tools", "generate", "doctor"):
