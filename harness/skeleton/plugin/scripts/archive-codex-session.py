@@ -3,6 +3,7 @@
 
 Orca 작업 폴더(config.json 의 orca_workspaces, 기본 ~/orca/workspaces) 아래 세션과,
 하네스 워크트리 폴더(config.json 의 works_dir, 안쪽 배치면 `.works`) 아래의 링크된 워크트리 세션만 다룬다.
+`.works/` 쪽은 Orca 터미널에서 뜬 세션만 저절로 보관한다(다른 터미널에서 사람이 직접 연 세션은 두고, 정리 스크립트가 그 워크트리를 지울 때 함께 보관한다).
 codex 실행 파일은 PATH · ~/.local/bin · macOS 앱 번들 순서로 찾고, 없으면 조용히 끝낸다.
 """
 import json
@@ -32,12 +33,18 @@ def workspaces_root():
     return os.path.realpath(os.path.expanduser(value)) + os.sep
 
 
-def in_workspace(cwd):
-    """작업자 워크트리인가: Orca 작업 폴더 아래이거나, 하네스 워크트리 폴더(config.json works_dir, 예: .works) 아래의 링크된 git 워크트리."""
+def in_workspace(cwd, explicit):
+    """작업자 워크트리인가: Orca 작업 폴더 아래이거나, 하네스 워크트리 폴더(config.json works_dir, 예: .works) 아래의 링크된 git 워크트리.
+
+    `.works/` 는 사람이 직접 세션을 여는 자리이기도 하다. 그래서 세션이 끝날 때 저절로 도는 경우(explicit 아님)에는
+    **Orca 터미널에서 뜬 세션**(Orca 가 넣는 ORCA_TERMINAL_HANDLE 이 있다)만 보관한다. 다른 터미널에서 직접 연 세션은 건드리지 않는다.
+    정리 스크립트가 워크트리를 지우며 경로를 주고 부른 경우(explicit)는 그 워크트리의 세션을 모두 보관한다(지워지는 자리다)."""
     if cwd.startswith(workspaces_root()):
         return True
     works = load_config().get("works_dir")
     if not works or works not in cwd.split(os.sep)[:-1]:
+        return False
+    if not explicit and not os.environ.get("ORCA_TERMINAL_HANDLE"):
         return False
     try:
         r = subprocess.run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
@@ -89,7 +96,7 @@ def main():
     sid = None if explicit else (os.environ.get("CODEX_SESSION_ID") or os.environ.get("CODEX_THREAD_ID")
                                  or data.get("session_id") or data.get("thread_id"))
     cwd = os.path.realpath(sys.argv[1] if explicit else data.get("cwd") or os.getcwd())
-    if not in_workspace(cwd):
+    if not in_workspace(cwd, explicit):
         return
     ids = [sid] if sid else session_ids_for_cwd(cwd)
     codex = find_codex()
