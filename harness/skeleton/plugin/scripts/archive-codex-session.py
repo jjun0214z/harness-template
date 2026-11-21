@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """끝난 Orca Codex 작업자 세션을 Codex 보관함으로 옮긴다 (SessionEnd, Orca 를 고른 하네스에만 들어간다).
 
-Orca 작업 폴더(config.json 의 orca_workspaces, 기본 ~/orca/workspaces) 아래 세션만 다룬다.
+Orca 작업 폴더(config.json 의 orca_workspaces, 기본 ~/orca/workspaces) 아래 세션과,
+하네스 워크트리 폴더(config.json 의 works_dir, 안쪽 배치면 `.works`) 아래의 링크된 워크트리 세션만 다룬다.
 codex 실행 파일은 PATH · ~/.local/bin · macOS 앱 번들 순서로 찾고, 없으면 조용히 끝낸다.
 """
 import json
@@ -17,13 +18,37 @@ def plugin_root():
             or os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def workspaces_root():
+def load_config():
     try:
         with open(os.path.join(plugin_root(), "config.json"), encoding="utf-8") as f:
-            value = json.load(f).get("orca_workspaces") or "~/orca/workspaces"
+            cfg = json.load(f)
     except (OSError, ValueError):
-        value = "~/orca/workspaces"
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def workspaces_root():
+    value = load_config().get("orca_workspaces") or "~/orca/workspaces"
     return os.path.realpath(os.path.expanduser(value)) + os.sep
+
+
+def in_workspace(cwd):
+    """작업자 워크트리인가: Orca 작업 폴더 아래이거나, 하네스 워크트리 폴더(config.json works_dir, 예: .works) 아래의 링크된 git 워크트리."""
+    if cwd.startswith(workspaces_root()):
+        return True
+    works = load_config().get("works_dir")
+    if not works or works not in cwd.split(os.sep)[:-1]:
+        return False
+    try:
+        r = subprocess.run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    lines = r.stdout.split("\n")
+    if r.returncode != 0 or len(lines) < 2:
+        # 워크트리가 이미 지워졌다(정리 스크립트가 지운 뒤 다시 보관): 폴더가 없을 때만 이름으로 본다
+        return not os.path.isdir(cwd)
+    return os.path.realpath(lines[0]) != os.path.realpath(lines[1])
 
 
 def find_codex():
@@ -64,7 +89,7 @@ def main():
     sid = None if explicit else (os.environ.get("CODEX_SESSION_ID") or os.environ.get("CODEX_THREAD_ID")
                                  or data.get("session_id") or data.get("thread_id"))
     cwd = os.path.realpath(sys.argv[1] if explicit else data.get("cwd") or os.getcwd())
-    if not cwd.startswith(workspaces_root()):
+    if not in_workspace(cwd):
         return
     ids = [sid] if sid else session_ids_for_cwd(cwd)
     codex = find_codex()

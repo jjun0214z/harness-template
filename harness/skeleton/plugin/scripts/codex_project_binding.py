@@ -14,7 +14,8 @@ PC 앱에서 프로젝트 밖으로 보일 수도 있다. 하네스는 두 귀�
   같은 프로젝트 이름·root 의 로컬 프로젝트로 잠금·원자 교체한다.
 
 대응 규칙(cwd → 프로젝트):
-  1. `project_roots.path` 와 같거나 그 하위
+  1. `project_roots.path` 와 같거나 그 하위(여러 개에 걸리면 가장 깊은 root. 하위 경로가 다른 프로젝트 저장소의
+     워크트리면 그 프로젝트: 하네스 안 `.repos/<저장소>` · `.works/<작업>/<저장소>` 가 하네스 프로젝트로 묶이지 않게 한다)
   2. `~/orca/workspaces/<레포이름>/...` 이면 같은 이름의 프로젝트
   3. 그 밖의 경로는 `git rev-parse --git-common-dir` 로 본 저장소를 찾아 그 부모가 project root 이면 대응
 데스크톱 옛 귀속과 cwd 유도 결과가 다르거나 「프로젝트 없음」이면 --fix 에서도 건드리지 않는다.
@@ -291,11 +292,31 @@ def resolve_project(
     if not cwd:
         return None
     cwd = os.path.normpath(cwd)
-    # 1. project root 와 같거나 그 하위
+
+    def by_common() -> str | None:
+        """git 본 저장소의 폴더가 project root 인 프로젝트."""
+        common = common_dir_fn(cwd)
+        if common:
+            parent = os.path.normpath(os.path.dirname(os.path.normpath(common)))
+            for pid, project in projects.items():
+                for root in project["roots"]:
+                    if os.path.normpath(root) == parent:
+                        return pid
+        return None
+
+    # 1. project root 와 같거나 그 하위. 여러 root 에 걸리면 가장 깊은 것(하네스 안 `.repos/<저장소>` 가 하네스보다 먼저다)
+    best: tuple[int, str, str] | None = None
     for pid, project in projects.items():
         for root in project["roots"]:
-            if _is_within(cwd, root):
-                return pid
+            norm = os.path.normpath(root)
+            if _is_within(cwd, norm) and (best is None or len(norm) > best[0]):
+                best = (len(norm), pid, norm)
+    if best:
+        if cwd == best[2]:
+            return best[1]
+        # 프로젝트 폴더 안에 다른 저장소의 워크트리가 들어 있을 수 있다(안쪽 배치 `<하네스>/.works/<작업>/<저장소>`):
+        # 그 워크트리의 본 저장소가 프로젝트면 그쪽이 주인이다
+        return by_common() or best[1]
     # 2. ~/orca/workspaces/<레포이름>/...
     orca_root = os.path.normpath(str(home / "orca" / "workspaces"))
     if _is_within(cwd, orca_root) and cwd != orca_root:
@@ -305,14 +326,7 @@ def resolve_project(
             if project["name"] == repo_name:
                 return pid
     # 3. git 본 저장소의 부모 경로가 project root 인가
-    common = common_dir_fn(cwd)
-    if common:
-        parent = os.path.normpath(os.path.dirname(os.path.normpath(common)))
-        for pid, project in projects.items():
-            for root in project["roots"]:
-                if os.path.normpath(root) == parent:
-                    return pid
-    return None
+    return by_common()
 
 
 # ---------- 분류 ----------
