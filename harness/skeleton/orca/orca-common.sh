@@ -16,12 +16,13 @@ ORCA="$(find_orca)"
 # harness.json 조회: cfg '<파이썬 식>' (c = 설정 dict)
 cfg() { "$PY" -c "import json,sys; c=json.load(open(sys.argv[1],encoding='utf-8')); print($1)" "$HARNESS_ROOT/harness.json"; }
 # 저장소 키 또는 폴더 → "폴더 기준브랜치 [연결 경로]". 하네스 자신은 key 'harness' 또는 폴더 이름.
+# 하네스는 경로 자리에 '@harness' 를 낸다: 배치(안쪽 .repos · 옆)와 무관하게 하네스 본 체크아웃이다.
 repo_info() {
   "$PY" - "$HARNESS_ROOT/harness.json" "$1" <<'PYEOF'
 import json, sys
 c = json.load(open(sys.argv[1], encoding="utf-8")); want = sys.argv[2]
 h = c["harness_repo"]
-rows = [("harness", h["dir"], h.get("base_branch", "main"), h.get("path", "") if h.get("source") == "local" else "")]
+rows = [("harness", h["dir"], h.get("base_branch", "main"), "@harness")]
 rows += [(r["key"], r.get("dir") or r["key"], r.get("base_branch", "main"), r.get("path", "") if r.get("source") == "local" else "") for r in c["repos"]]
 for key, d, base, path in rows:
     if want in (key, d):
@@ -30,7 +31,7 @@ else:
     sys.exit(1)
 PYEOF
 }
-# 배치(harness.json layout) 세 줄: 저장소가 놓이는 폴더 / 워크트리 폴더 / inside(하네스 안 .works) 또는 beside(옛 옆 배치)
+# 배치(harness.json layout) 네 줄: 저장소가 놓이는 폴더 / 워크트리 폴더 / inside(하네스 안 .works) 또는 beside(옛 옆 배치) / 하네스 본 체크아웃
 place_info() {
   "$PY" - "$HARNESS_ROOT" <<'PYEOF'
 import sys
@@ -40,6 +41,7 @@ cfg = hl.load_config(sys.argv[1] + "/harness.json")
 print(hl.repos_root(cfg, sys.argv[1]))
 print(hl.works_root(cfg, sys.argv[1]))
 print("inside" if hl.works_inside(cfg) else "beside")
+print(hl.harness_main(sys.argv[1]))
 PYEOF
 }
 j() { "$PY" -c "import json,sys; d=json.load(sys.stdin); r=d.get('result') or d.get('error') or {}; print($1)"; }

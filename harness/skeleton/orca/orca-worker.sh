@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Orca 작업자 세션을 띄워 과제를 맡긴다. 저장소에 새 워크트리 + 고른 에이전트 세션 하나를 만든다.
 # - 워크트리 자리는 harness.json layout 을 따른다.
-#   안쪽 배치(works_dir 가 하네스 안): 하네스가 <하네스>/.works/<작업이름>/<저장소 폴더> 에 git worktree 를 만들고(이미 있으면 그대로 쓴다.
-#   work.py new 로 연 작업이면 작업이름에 번호 T-0001 또는 폴더 이름 T-0001-<제목> 을 준다) Orca 는 그 경로에 작업자만 띄운다.
+#   안쪽 배치(works_dir 가 하네스 안): 하네스(work.py worktree)가 <하네스>/.works/<작업이름>/<저장소 폴더> 에 git worktree 를 만들고(이미 있으면 그대로 쓴다.
+#   work.py new 로 연 작업이면 작업이름에 번호 T-0001 또는 폴더 이름 T-0001-<제목> 을 준다. 브랜치도 그 작업의 것을 쓴다) Orca 는 그 경로에 작업자만 띄운다.
 #   옛 옆 배치: 전처럼 Orca 가 자기 작업 폴더(~/orca/workspaces)에 워크트리를 만든다. ORCA_WORKTREE_MODE=orca|harness 로 바꿀 수 있다.
 # - Orca 저장소는 이름이 아니라 경로로 고른다(다른 프로젝트에 같은 이름의 저장소가 등록돼 있어도 섞이지 않는다).
 # - 기준 브랜치는 harness.json 저장소 목록을 따른다. 하네스 자체 작업은 'harness' 또는 하네스 폴더 이름.
@@ -40,9 +40,11 @@ spec="$spec
 끝내기 전: 자기가 띄운 개발 서버 · 검수용 크롬 · adb 서버를 끄고, 다시 만들 수 있는 찌꺼기는 정확한 경로를 rm -rf 로 바로 지운다. trash · Finder 휴지통으로 보내지 않는다(용량이 그대로 남는다). ~/Documents 와 사용자 파일은 지우지 않는다.
 막히면 $ORCA orchestration send --type escalation --subject \"<무엇이 막혔나>\" --body \"<선택지>\" 로 묻는다."
 # 기준 ref 는 그 저장소에 실제로 있는 것만 쓴다. 원격이 없는 저장소에는 origin/<기준> 이 없다(로컬 기준 브랜치로 떨어진다).
-{ read -r repos_root; read -r works_root; read -r works_mode; } <<< "$(place_info)"
-[ -n "${repos_root:-}" ] && [ -n "${works_root:-}" ] || { echo "배치를 읽지 못했다($HARNESS_ROOT/harness.json layout). 멈춘다."; exit 2; }
+{ read -r repos_root; read -r works_root; read -r works_mode; read -r harness_main; } <<< "$(place_info)"
+[ -n "${repos_root:-}" ] && [ -n "${works_root:-}" ] && [ -n "${harness_main:-}" ] || { echo "배치를 읽지 못했다($HARNESS_ROOT/harness.json layout). 멈춘다."; exit 2; }
 projects="${ORCA_PROJECTS_DIR:-$repos_root}"
+# 하네스 자신(키 harness)은 배치와 무관하게 하네스 본 체크아웃이다(.repos 아래에서 찾지 않는다)
+[ "${local_path:-}" = "@harness" ] && local_path="$harness_main"
 repo_dir="${local_path:-$projects/$dir}"   # 연결한 저장소는 그 경로 그대로
 has_ref() { git -C "$repo_dir" rev-parse --verify --quiet "$1^{commit}" >/dev/null 2>&1; }
 if [ -n "$base_ref" ]; then
@@ -73,22 +75,14 @@ mode="${ORCA_WORKTREE_MODE:-}"
 [ -n "$mode" ] || { [ "$works_mode" = inside ] && mode=harness || mode=orca; }
 made_wt=""
 if [ "$mode" = harness ]; then
-  # 워크트리는 하네스가 만든다: <워크트리 폴더>/<작업이름>/<저장소 폴더>. 번호만 줬으면(T-0001) 그 번호의 작업 폴더를 찾는다
-  space="$works_root/$name"
-  if [ ! -d "$space" ]; then
-    found=()
-    for cand in "$works_root/$name"-*/; do [ -d "$cand" ] && found+=("${cand%/}"); done
-    [ "${#found[@]}" -eq 1 ] && space="${found[0]}"
-  fi
-  made_wt="$space/$dir"
-  if [ ! -d "$made_wt" ]; then
-    mkdir -p "$space"
-    if git -C "$repo_dir" rev-parse --verify --quiet "refs/heads/$name" >/dev/null 2>&1; then
-      git -C "$repo_dir" worktree add "$made_wt" "$name" >/dev/null 2>&1
-    else
-      git -C "$repo_dir" worktree add -b "$name" "$made_wt" "$base" >/dev/null 2>&1
-    fi || { echo "워크트리를 만들지 못했다: $made_wt (저장소 $repo_dir · 기준 $base). 멈춘다."; exit 1; }
-  fi
+  # 워크트리는 하네스가 만든다. 자리 · 브랜치 이름은 work.py 한 곳이 정한다(work.py new 로 연 작업과 같은 길):
+  # 열린 작업(번호 T-0001 · 폴더 이름)이면 그 작업 폴더와 그 작업의 브랜치, 아니면 <워크트리 폴더>/<작업이름>/<저장소 폴더> 에 브랜치 <작업이름>.
+  # 실패 이유(git 이 말한 것 · 맞는 작업 폴더가 여러 개 등)는 work.py 가 그대로 보여 주고, 빈 작업 폴더를 남기지 않는다.
+  base_args=()
+  [ -n "$base_ref" ] && base_args=(--base "$base_ref")
+  made_wt="$("$PY" "$HARNESS_ROOT/harness/scripts/work.py" --root "$HARNESS_ROOT" worktree "$repo" "$name" ${base_args[@]+"${base_args[@]}"})" \
+    || { echo "워크트리를 준비하지 못했다(위 이유). 작업자를 띄우지 않는다."; exit 1; }
+  [ -d "$made_wt" ] || { echo "워크트리 경로를 받지 못했다: '$made_wt'. 멈춘다."; exit 1; }
   # 있는 워크트리에는 만들 때 쓰는 옵션(--repo · --base-branch · --name · --display-name)을 주지 않는다(Orca 가 거절한다)
   place_args=(--worktree "path:$made_wt")
 else
@@ -99,7 +93,12 @@ out="$("$ORCA" orchestration worker-start --spec "$spec" --task-title "$dir: $na
 start_status=$?
 task="$(echo "$out" | j "r.get('taskId','')")"
 dispatch="$(echo "$out" | j "r.get('dispatchId','')")"
-[ -n "$task" ] || { echo "작업자 시작 실패: $out" | head -c 1500; exit 1; }
+left_note() {  # 작업자가 안 떴어도 하네스가 만든 워크트리 · 브랜치는 남는다
+  [ -n "$made_wt" ] || return 0
+  echo "워크트리는 남아 있다: $made_wt (브랜치 $(git -C "$made_wt" symbolic-ref --short HEAD 2>/dev/null || echo '?'))."
+  echo "  같은 명령을 다시 돌리면 이 워크트리를 그대로 쓴다. 필요 없으면: git -C \"$repo_dir\" worktree remove \"$made_wt\""
+}
+[ -n "$task" ] || { echo "작업자 시작 실패: $out" | head -c 1500; echo; left_note; exit 1; }
 term="$("$ORCA" orchestration dispatch-show --task "$task" --json | j "r['dispatch']['assignee_handle']")"
 wt="$("$ORCA" terminal list --json | j "next((t['worktreePath'] for t in (r.get('terminals') or []) if t['handle']=='$term'), '')")"
 [ -n "$wt" ] || wt="$made_wt"
@@ -117,5 +116,6 @@ OUT
 if [ "$start_status" -ne 0 ]; then
   echo "worker-start 가 준비 완료를 증명하지 못했다. 자동 재실행하지 않는다. 확인:" >&2
   echo "  $ORCA orchestration worker-show --dispatch $dispatch --json" >&2
+  left_note >&2
   exit "$start_status"
 fi

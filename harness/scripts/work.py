@@ -6,6 +6,7 @@
   work.py new <제목> [저장소 키…]   번호를 받고 문서 · 저장소별 워크트리를 만든다
   work.py add <번호> <저장소 키…>   열린 작업에 저장소를 더한다
   work.py done <번호> [--force]     워크트리를 치우고 문서를 완료 자리로 옮긴다 (--dry-run 은 미리 보기)
+  work.py worktree <저장소> <이름>  그 작업의 워크트리 경로를 낸다(없으면 만든다). 작업자를 띄우는 스크립트가 쓴다
 
 사람이 치는 명령은 여는 것(new)과 닫는 것(done) 두 개다. 단계를 체크하지 않는다.
 상태는 파일에 적지 않고 git 에서 매번 계산한다.
@@ -151,10 +152,16 @@ def all_docs(place: Place, include_done: bool = False) -> List[Doc]:
     return out
 
 
-def find_doc(place: Place, tid: str) -> Doc:
+def norm_id(place: Place, tid: str) -> str:
+    """사람이 친 번호(`1` · `t-0001`)를 문서 번호 꼴(`T-0001`)로."""
     tid = tid.upper() if re.match(r"^[a-z]+-\d+$", tid) else tid
     if re.fullmatch(r"\d{1,4}", tid):
         tid = f"{place.wf['prefix']}-{int(tid):04d}"
+    return tid
+
+
+def find_doc(place: Place, tid: str) -> Doc:
+    tid = norm_id(place, tid)
     for d in all_docs(place, include_done=True):
         if d.tid == tid:
             return d
@@ -203,14 +210,23 @@ def make_worktree(place: Place, key: str, tid: str, slug: str, branch: str) -> T
     path = place.space(tid, slug) / place.repos[key]["dir"]
     if path.exists():
         return path, start
+    add_worktree(repo, path, branch, ref, key)
+    return path, start
+
+
+def add_worktree(repo: Path, path: Path, branch: str, ref: str, label: str) -> None:
+    """`git worktree add`. 브랜치가 이미 있으면 그것을, 없으면 ref 에서 새로 만든다.
+    실패하면 git 이 말한 이유를 그대로 올리고, 이번에 만든 빈 작업 폴더는 남기지 않는다."""
+    made = not path.parent.exists()
     path.parent.mkdir(parents=True, exist_ok=True)
     if ok(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"):
         code, out = git(repo, "worktree", "add", str(path), branch)
     else:
         code, out = git(repo, "worktree", "add", "-b", branch, str(path), ref)
     if code != 0:
-        raise Stop(f"{key} 워크트리를 만들지 못했다: {out[-300:]}")
-    return path, start
+        if made and path.parent.is_dir() and not any(path.parent.iterdir()):
+            path.parent.rmdir()
+        raise Stop(f"{label} 워크트리를 만들지 못했다({path} · 브랜치 {branch} · 기준 {ref}): {out[-300:]}")
 
 
 # ---------------------------------------------------------------- 상태
@@ -448,6 +464,62 @@ def cmd_done(place: Place, tid: str, force: bool, dry: bool) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- worktree (작업자를 띄우는 스크립트가 부른다)
+
+def cmd_worktree(root: Path, key: str, name: str, base: Optional[str]) -> int:
+    """저장소 하나의 작업 워크트리 자리를 정하고(없으면 만들고) 그 경로만 stdout 에 낸다. 워크트리를 만드는 길을 하나로 둔다.
+
+    - name 이 열린 작업(번호 `T-0001` · `1` 또는 폴더 이름 `T-0001-<제목>`)이면 그 작업 폴더와 **그 작업의 브랜치**를 쓴다.
+      대상 저장소가 아니었으면 `add` 와 같이 문서에 더한다.
+    - 아니면 `<워크트리 폴더>/<name>/<저장소 폴더>` 에 브랜치 `<name>` 으로 만든다(작업 문서 없이 띄우는 작업자).
+    - 저장소 키 `harness`(또는 하네스 폴더 이름)는 배치와 무관하게 하네스 본 체크아웃이다.
+    workflow 묶음을 켜지 않은 하네스에서도 돈다(그때는 작업 문서를 보지 않는다)."""
+    root = root.resolve()
+    cfg = hl.load_config(root / hl.CONFIG_NAME)
+    if not name or name.startswith(".") or any(c in name for c in "/\\") or name != name.strip():
+        raise Stop(f"작업이름으로 쓸 수 없다: `{name}` (경로 구분자 · 앞뒤 공백 · 점으로 시작하는 이름은 안 된다)")
+    h = cfg["harness_repo"]
+    rkey = None
+    if key in ("harness", h["dir"]):
+        repo, d, base_branch = hl.harness_main(root), h["dir"], h["base_branch"]
+    else:
+        r = next((x for x in cfg["repos"] if key in (x["key"], x["dir"])), None)
+        if r is None:
+            raise Stop(f"저장소 `{key}` 가 harness.json 에 없다 (있는 키: harness, {', '.join(x['key'] for x in cfg['repos']) or '없음'})")
+        repo, d, base_branch, rkey = hl.repo_path(r, hl.repos_root(cfg, root)), r["dir"], r["base_branch"], r["key"]
+    if not (repo / ".git").exists():
+        raise Stop(f"저장소가 없다: {repo}")
+    works = hl.works_root(cfg, root)
+    space, branch, doc, place = works / name, name, None, None
+    if hl.has_pack(cfg, "workflow"):
+        place = Place(root)
+        tid = norm_id(place, name)
+        doc = next((x for x in all_docs(place) if tid == x.tid or name == f"{x.tid}-{x.slug}"), None)
+    if doc:
+        space, branch = place.space(doc.tid, doc.slug), doc.branch
+    elif not space.is_dir():
+        cands = sorted(p for p in works.iterdir() if p.is_dir() and p.name.startswith(name + "-")) if works.is_dir() else []
+        if len(cands) > 1:
+            raise Stop(f"`{name}` 에 맞는 작업 폴더가 여러 개다({', '.join(p.name for p in cands)}). 새로 만들지 않는다. 폴더 이름을 그대로 준다")
+        if cands:
+            space = cands[0]
+    path = space / d
+    if not path.exists():
+        if doc and rkey and rkey not in doc.repos:
+            saved, sys.stdout = sys.stdout, sys.stderr  # add 의 안내 줄은 stderr 로(stdout 은 경로 한 줄만)
+            try:
+                cmd_add(place, doc.tid, [rkey])
+            finally:
+                sys.stdout = saved
+        else:
+            ref = base or base_ref(repo, base_branch)
+            if not ok(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"):
+                raise Stop(f"기준 ref 없음: {repo} 에 `{ref}` 가 없다")
+            add_worktree(repo, path, branch, ref, key)
+    print(path)
+    return 0
+
+
 # ---------------------------------------------------------------- 입구
 
 def main(argv=None) -> int:
@@ -466,8 +538,14 @@ def main(argv=None) -> int:
     d.add_argument("id")
     d.add_argument("--force", action="store_true")
     d.add_argument("--dry-run", action="store_true")
+    w = sub.add_parser("worktree", help="저장소 하나의 작업 워크트리 경로(없으면 만든다). 작업자를 띄우는 스크립트용")
+    w.add_argument("repo", help="저장소 키 또는 폴더. 하네스 자신은 harness")
+    w.add_argument("name", help="작업 번호(T-0001) · 작업 폴더 이름 · 새 작업이름")
+    w.add_argument("--base", help="새로 만들 때의 기준 ref(기본: 그 저장소의 origin/<기준 브랜치>, 없으면 로컬 <기준 브랜치>)")
     args = ap.parse_args(argv)
     try:
+        if args.cmd == "worktree":
+            return cmd_worktree(args.root, args.repo, args.name, args.base)
         place = Place(args.root)
         if args.cmd == "new":
             return cmd_new(place, args.title, args.repos)
