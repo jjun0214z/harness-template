@@ -68,6 +68,7 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | 절 | 한 줄 |
 | --- | --- |
 | [🧭 설치하면 일어나는 일](#-설치하면-일어나는-일) | 질문 · 기본값 · 단계 |
+| [📁 폴더 구조](#-폴더-구조) | 작업 레포 `.repos/` · 워크트리 `.works/` · 옛 옆 배치에서 옮기기 |
 | [📦 무엇이 생기나](#-무엇이-생기나) | 생성물과 규칙 스킬 |
 | [🔧 설정](#-설정) | `harness.json` · 설정 바꾸기 · 이름 바꾸면 남는 자리 |
 | [🔄 템플릿 갱신](#-템플릿-갱신) | `update` 와 백업 파일 |
@@ -95,7 +96,8 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | 만드는 자리 | 지금 폴더가 비어 있거나 이미 이 하네스가 있으면 **그 폴더**, 아니면 `<지금 폴더>/<슬러그>` |
 | 자리가 차 있으면 | 이름이 같아도 비어 있지 않은 폴더에는 섞지 않는다. 그 자리도 차 있으면 멈추고 다른 경로를 묻는다 |
 | 다른 자리에 만들기 | 요약에서 다른 경로를 치거나 `--root <경로>` |
-| 저장소 | 0개. 나중에 `add-repo` 로 더한다 |
+| 저장소 | 0개. 나중에 `add-repo` 로 더한다. 0개인 동안 오케스트레이터는 만드는 일을 직접 하지 않고 저장소 추가부터 안내한다 |
+| 배치 | 안쪽. 작업 레포는 `<하네스>/.repos/<폴더>`, 워크트리는 `<하네스>/.works/<작업>/<폴더>` ([폴더 구조](#-폴더-구조)) |
 | GitHub | 없음(로컬만) |
 | 규칙 스킬 | 채울 자리 틀 전부 |
 | 작업자 실행 방식 | 서브에이전트(설치할 것이 없다). Orca 는 고를 때만 설치한다 |
@@ -149,6 +151,54 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 
 </details>
 
+## 📁 폴더 구조
+
+작업 레포와 워크트리는 **하네스 폴더 안**에 둔다. 하네스 git 은 두 폴더를 무시한다(`.gitignore` 관리 블록).
+
+```
+<하네스 폴더>/                          (예: ~/dev/acme/orchestrator)
+  .repos/<저장소 폴더>/                  작업 레포 원본 (새로 만들기 · clone)
+  .works/<T-번호-제목>/<저장소 폴더>/     작업별 워크트리 (저장소가 여럿이면 같은 작업 폴더 안에 나란히)
+  CLAUDE.md  AGENTS.md  harness.json
+  docs/  harness/  plugins/  …
+```
+
+| 무엇 | 어디 | 누가 만들고 지우나 |
+| --- | --- | --- |
+| 작업 레포 원본 | `.repos/<폴더>` | `run` · `add-repo` 가 만든다. **정리 스크립트는 어떤 경우에도 지우지 않는다** |
+| 워크트리 | `.works/<작업>/<폴더>` | `work.py new` · `scripts/orca-worker.sh` 가 만든다. `work.py done` · `finish_worker.py` · `cleanup_worktrees.py` 가 치운다 |
+| 연결한 저장소(`source: local`) | 그 경로 그대로 | 옮기지 않는다 |
+
+- 워크트리 길은 하나다. 작업 흐름(`work.py`)도 Orca 작업자도 `.works/` 아래에서 일한다.
+- 설정은 `harness.json` 의 `"layout": {"repos_dir": ".repos", "works_dir": ".works"}`. 새로 설치하면 이 값이 들어간다.
+- **역할은 세션을 연 자리로 갈린다.** 하네스 루트에서 연 세션이 오케스트레이터다. `.repos/` · `.works/` 아래에서 연 세션은 하네스의 `CLAUDE.md` 가 위쪽 폴더 지침으로 같이 읽히지만 그 저장소의 **작업자**다(생성되는 지침에 그렇게 적힌다).
+- 오케스트레이터 세션의 파일 검색은 `.gitignore` 를 따르므로 `.repos/` · `.works/` 안이 기본 검색에 안 잡힌다. 코드를 봐야 하면 경로를 직접 준다(오케스트레이터는 코드를 통째로 읽지 않는 것이 원칙이다).
+
+<details><summary>옛 옆 배치(layout 칸이 없는 설정)와 안쪽으로 옮기기</summary>
+
+`layout` 칸이 없는 `harness.json` 은 **예전 동작 그대로**다. 폴더를 자동으로 옮기지 않는다.
+
+| | 작업 레포 | 워크트리 | Orca 작업자 |
+| --- | --- | --- | --- |
+| 안쪽(새 설치) | `<하네스>/.repos/<폴더>` | `<하네스>/.works/<작업>/<폴더>` | 같은 `.works/` |
+| 옆(옛 설정) | `<하네스>/../<폴더>` | `<하네스>/../.work/<작업>/<폴더>` | Orca 작업 폴더(`~/orca/workspaces`) |
+
+옛 설정은 `run` · `add-repo` 가 설정을 다시 쓸 때 `"layout": {"repos_dir": "..", "works_dir": "../.work"}` 로 적힌다(동작은 같다).
+
+**옆 → 안쪽으로 옮기기(손으로, 하네스 폴더에서).** 열린 작업을 먼저 닫거나 올려 두면 쉽다.
+
+1. `harness.json` 에 `"layout": {"repos_dir": ".repos", "works_dir": ".works"}` 를 넣는다(있으면 값을 바꾼다).
+2. 저장소 폴더를 옮긴다: `mkdir -p .repos && mv ../<폴더> .repos/<폴더>` (저장소마다. `source: local` 은 옮기지 않는다).
+3. 남은 워크트리가 있으면 옮기고 git 에 알린다: `mkdir -p .works && mv ../.work/<작업> .works/<작업>` → `git -C .repos/<폴더> worktree repair "$PWD/.works/<작업>/<폴더>"` (워크트리마다). 없으면 건너뛴다.
+4. `python3 harness/scripts/generate.py` (저장소 지도 · 작업자 정의 · `.gitignore` 블록이 새 자리로 바뀐다).
+5. `python3 harness/scripts/bootstrap.py run` 을 한 번 돌린다(Codex 신뢰 · 플러그인 · Orca 등록이 새 경로로 다시 잡힌다. Orca 의 옛 경로 등록은 Orca 앱에서 지운다).
+6. `python3 harness/scripts/bootstrap.py doctor`. 「배치」 줄이 안쪽이고 「배치 어긋남」 · 「옛 워크트리 폴더」 안내가 없으면 끝이다.
+
+- 규칙 스킬 본문(`git-rules` 3절 · `deploy` 잠금 파일 줄)의 `.work` 경로는 사람이 채우는 자리라 생성기가 덮지 않는다. 직접 `.works` 로 고친다.
+- 저장소마다 있는 `CLAUDE.md` 의 「오케스트레이터는 `../<하네스>`」 줄도 직접 `../..` 로 고친다.
+
+</details>
+
 ## 📦 무엇이 생기나
 
 | 생성물 | 성격 | 다시 생성하면 |
@@ -198,8 +248,8 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | 훅 | 언제 | 하는 일 |
 | --- | --- | --- |
 | push 가드(플러그인) | push 직전 | 강제 push 는 막는다. 설정한 브랜치 · 규칙 변경이 든 하네스 기준 브랜치 push 는 묻는다. 어디로 가는 push 인지 모르면 묻는다 |
-| 규칙 보호 | 파일 쓰기 직전 | 공유 체크아웃의 규칙 파일 쓰기는 묻는다. 격리 워크트리에서는 묻지 않는다 |
-| 하네스 동기화 | 세션 시작 | 원격을 fast-forward 로만 받는다. 규칙이 바뀌었으면 바뀐 파일 이름을 댄다 |
+| 규칙 보호 | 파일 쓰기 직전 | 공유 체크아웃의 규칙 파일 쓰기는 묻는다. 격리 워크트리와 `.repos/` · `.works/` 안(그 저장소의 파일)에서는 묻지 않는다 |
+| 하네스 동기화 | 세션 시작 | 원격을 fast-forward 로만 받는다. 규칙이 바뀌었으면 바뀐 파일 이름을 댄다. **등록된 저장소가 0개면 「저장소 추가가 먼저다 · 직접 만들지 않는다」를 한 줄로 알린다** |
 | 〃 | 턴 끝 | 커밋 · push 안 한 하네스 변경이 있으면 막는다. 같은 세션 · 같은 상태로는 한 번만 |
 | 고친 뒤 할 일 | 파일을 고친 뒤 | `harness.json` 이면 생성기, 훅 · 플러그인이면 점검(doctor)을 알린다 |
 
@@ -243,7 +293,8 @@ push 가드와 규칙 보호는 같은 명령 해석기(`shellwords.py`)를 쓴�
   ],
   "engines": ["claude", "codex"],
   "runner": "subagent",
-  "packs": []
+  "packs": [],
+  "layout": {"repos_dir": ".repos", "works_dir": ".works"}
 }
 ```
 
@@ -259,6 +310,7 @@ push 가드와 규칙 보호는 같은 명령 해석기(`shellwords.py`)를 쓴�
 - `source: local` 은 폴더 이름 · 기본 브랜치 · 원격을 그 저장소에서 읽는다.
 - `connect_files: true` 일 때만 없는 `CLAUDE.md` · `AGENTS.md` · `.claude/settings.json` 을 더한다.
 - 빈 저장소라 의존성(pnpm install 등)은 설치하지 않는다.
+- `layout` 은 작업 레포 · 워크트리 자리다([폴더 구조](#-폴더-구조)). **직접 쓰는 설정 파일에는 위처럼 적는다.** 칸이 아예 없으면 옛 옆 배치(`../<폴더>` · `../.work`)로 읽는다(갱신으로 동작이 바뀌지 않게).
 - `packs` 는 고른 것만 붙는 선택 묶음이다. 칸이 아예 없던 옛 설정은 예전처럼 전부 켠 것으로 읽고, 생성기가 그렇게 적어 둔다(갱신으로 동작이 바뀌지 않게).
 
 | 묶음 | 켜면 |
@@ -294,12 +346,13 @@ push 가드와 규칙 보호는 같은 명령 해석기(`shellwords.py`)를 쓴�
 | 무엇 | 어디 | 역할 |
 | --- | --- | --- |
 | 템플릿 | `~/.harness-template` (이 저장소, 숨김 폴더) | 원본. 여기에 하네스를 만들지 않는다. 여러 프로젝트가 같이 쓴다 |
-| 프로젝트 루트 | 설치 명령을 실행한 폴더, 또는 그 아래 `<프로젝트 슬러그>/` | 그 안에 하네스(`orchestrator/`)와 새 저장소들 |
+| 프로젝트 루트 | 설치 명령을 실행한 폴더, 또는 그 아래 `<프로젝트 슬러그>/` | 그 안에 하네스(`orchestrator/`) |
+| 작업 레포 · 워크트리 | 하네스 폴더 안 `.repos/` · `.works/` | [폴더 구조](#-폴더-구조). 옛 옆 배치 설정이면 프로젝트 루트에 하네스와 나란히 |
 
 - 어느 쪽이 되는지는 [묻지 않고 쓰는 기본값](#묻지-않고-쓰는-기본값) 표의 「만드는 자리」와 같다.
 - 예: `~/dev` 가 비어 있지 않으면 `~/dev/acme/` 에 만든다.
 - 질문 첫머리에 「여기에 만듭니다: <경로>」를 보여 주고 Enter 면 그대로 간다.
-- 연결한 저장소는 루트 밖 경로 그대로 둔다.
+- 연결한 저장소는 그 경로 그대로 둔다(배치와 무관).
 
 </details>
 
@@ -407,7 +460,7 @@ Git Bash 에서 `curl … | bash` 한 줄을 그대로 써도 된다.
 
 ### 🧭 작업 흐름 (workflow 묶음)
 
-`packs` 에 `workflow` 를 넣으면 작업 하나 = 번호 하나(`T-0001`) = 문서 한 장(`docs/작업/`) + 저장소별 워크트리(`.work/<번호-제목>/<저장소>`)가 된다.
+`packs` 에 `workflow` 를 넣으면 작업 하나 = 번호 하나(`T-0001`) = 문서 한 장(`docs/작업/`) + 저장소별 워크트리(`<하네스>/.works/<번호-제목>/<저장소 폴더>`, 옛 옆 배치 설정이면 `<프로젝트 루트>/.work/…`)가 된다.
 사람이 치는 명령은 여는 것과 닫는 것 둘이다. 단계를 체크하지 않는다.
 
 | 하고 싶은 것 | 명령 |
@@ -430,6 +483,18 @@ Git Bash 에서 `curl … | bash` 한 줄을 그대로 써도 된다.
 | `subagent` (기본) | 서브에이전트 `<키>-worker` (워크트리 격리) | 없음 |
 | `worktree-session` | 해당 저장소의 별도 세션(`claude --worktree` · Codex 앱 워크트리) | 없음 |
 | `orca` | Orca 작업자(`scripts/orca-worker.sh`) | Orca 앱 · CLI (Windows 는 Git Bash) |
+
+워크트리 자리(안쪽 배치 기준):
+
+| `runner` | 워크트리가 생기는 곳 |
+| --- | --- |
+| `subagent` | 작업자 정의가 `<하네스>/.works/<작업이름>/<저장소 폴더>` 를 쓰게 한다(`work.py new` 로 먼저 만들어 브리프에 적는 것이 기본) |
+| `worktree-session` | `claude --worktree` · Codex 앱이 **자기 자리**에 만든다(Claude 는 그 저장소의 `.claude/worktrees/`). `.works/` 로 모이지 않는다. `work.py new` 로 만든 워크트리에서 세션을 열면 `.works/` 를 쓴다 |
+| `orca` | `scripts/orca-worker.sh` 가 `<하네스>/.works/<작업이름>/<저장소 폴더>` 에 워크트리를 만들고(이미 있으면 그대로) Orca 는 그 경로에 작업자만 띄운다. 작업이름에 `T-0001` 을 주면 `work.py new` 로 연 작업 폴더를 쓴다 |
+
+- Orca 저장소는 **경로로** 고른다(`--repo path:…` · `--worktree path:…`). 다른 프로젝트에 같은 이름의 저장소가 등록돼 있어도 작업자가 섞이지 않는다.
+- Orca 화면은 저장소를 폴더 이름으로 보여 준다. CLI(`orca repo add --path`)로는 표시 이름을 줄 수 없어, 여러 프로젝트에 같은 폴더 이름(`orchestrator` · `app` 등)이 있으면 화면에서는 한 이름으로 보인다. 셋업 · `add-repo` 가 겹치면 「Orca 이름 겹침」 안내를 낸다. 구분하려면 `harness_repo.dir` · 저장소 `dir` 을 프로젝트별로 다르게 짓는다(Orca 앱 안에서 이름을 바꿀 수 있는지는 확인하지 않았다).
+- 옛 옆 배치 설정이면 전처럼 Orca 가 자기 작업 폴더(`~/orca/workspaces`)에 워크트리를 만든다. `ORCA_WORKTREE_MODE=harness|orca` 로 한 번만 바꿔 띄울 수 있다.
 
 바꾸려면 `runner` 를 고치고 생성기를 돌린다. 예전 설정의 `orca.enabled` 는 생성기 · `update` 가 `runner` 로 옮긴다(`true` → `orca`, `false` → `subagent`).
 
