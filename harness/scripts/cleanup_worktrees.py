@@ -114,6 +114,9 @@ def main(argv=None):
                 print(f"남김 {label} : 커밋 안 된 변경 있음"); kept += 1; continue
             _, head = git(path, "rev-parse", "HEAD")
             n, local = hl.unlanded_commits(repo, head, entry["base_branch"], hl.local_only(entry))
+            if local and branch == entry["base_branch"]:
+                # 기준 브랜치 자신은 「기준에 병합됨」이 늘 참이다. 지우면 원격 없는 저장소의 기준 브랜치(커밋)를 잃는다
+                print(f"남김 {label} : 로컬 기준 브랜치({branch})를 체크아웃한 작업 공간이다(원격이 없어 지우지 않는다)"); kept += 1; continue
             if n is None:
                 print(f"남김 {label} : " + (f"로컬 기준 브랜치({entry['base_branch']})가 없어 병합 여부를 못 잼" if local else "원격에 없는 커밋 수를 못 잼")); kept += 1; continue
             if n:
@@ -125,7 +128,7 @@ def main(argv=None):
             gone.append(path)
             if args.apply:
                 code, _ = git(repo, "worktree", "remove", path)
-                if code == 0 and branch:
+                if code == 0 and branch and branch != entry["base_branch"]:  # 기준 브랜치는 어떤 경우에도 지우지 않는다
                     git(repo, "branch", "-D", branch)
             removed += 1
     if os.name != "nt" and hl.has_pack(cfg, "cleanup"):  # cleanup 묶음을 켰을 때만

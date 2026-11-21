@@ -219,6 +219,40 @@ class LocalOnlyHarness(unittest.TestCase):
         self.assertTrue((art / ".git").exists())
         self.assertIn("merge two", self.git(art, "log", "--oneline", "main").stdout)
 
+    def base_worktree(self):
+        """본 체크아웃이 다른 브랜치에 있고, 워크트리가 기준 브랜치(main)를 체크아웃한 상태. main 에만 있는 커밋이 하나 있다."""
+        r = self.boot(write_config(self.sb, {"local_only": True}), "--offline")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        art = self.sb.projects / "art"
+        self.assertEqual(self.git(art, "checkout", "-q", "-b", "side").returncode, 0)
+        wt = self.sb.tmp / "work" / "on-main"
+        wt.parent.mkdir(parents=True, exist_ok=True)
+        self.assertEqual(self.git(art, "worktree", "add", "-q", str(wt), "main").returncode, 0)
+        (wt / "only-main.txt").write_text("x\n", encoding="utf-8")
+        self.git(wt, "add", "only-main.txt")
+        self.assertEqual(self.git(wt, "commit", "-q", "-m", "only on main").returncode, 0)
+        return art, wt, self.git(art, "rev-parse", "main").stdout.strip()
+
+    def assert_main_kept(self, art, wt, sha):
+        self.assertTrue(wt.is_dir(), "기준 브랜치 워크트리를 지웠다")
+        self.assertEqual(self.git(art, "rev-parse", "--verify", "--quiet", "refs/heads/main").stdout.strip(), sha,
+                         "기준 브랜치(main)를 지웠다")
+
+    def test_cleanup_keeps_worktree_on_base_branch(self):
+        art, wt, sha = self.base_worktree()
+        r = self.script("cleanup_worktrees.py", "--apply", RECENT_MIN="0")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("로컬 기준 브랜치(main)를 체크아웃한 작업 공간이다", r.stdout)
+        self.assert_main_kept(art, wt, sha)
+
+    @unittest.skipIf(os.name == "nt", "작업자 정리는 posix 에서만 시험한다")
+    def test_finish_keeps_worktree_on_base_branch(self):
+        art, wt, sha = self.base_worktree()
+        r = self.script("finish_worker.py", str(wt))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("로컬 기준 브랜치(main)를 체크아웃한 워크트리다", r.stderr)
+        self.assert_main_kept(art, wt, sha)
+
 
 if __name__ == "__main__":
     unittest.main()

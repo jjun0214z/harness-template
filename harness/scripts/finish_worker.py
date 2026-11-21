@@ -423,6 +423,9 @@ def check(worktree: Path, dispatch: Optional[str], orca: Optional[str], cfg: Opt
     entry = hl.repo_for_checkout(cfg, HARNESS_ROOT, Path(common.stdout.strip()).parent)
     base = (entry or {}).get("base_branch", "")
     n, local = hl.unlanded_commits(Path(wt), "HEAD", base, hl.local_only(entry))
+    if local and base and git(wt, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == base:
+        # 기준 브랜치 자신은 「기준에 병합됨」이 늘 참이다. 지우면 원격 없는 저장소의 기준 브랜치(커밋)를 잃는다
+        raise Stop(f"원격이 없는 저장소의 로컬 기준 브랜치({base})를 체크아웃한 워크트리다. 지우지 않는다: {wt}")
     if n is None and local:
         raise Stop(f"원격이 없는 저장소인데 로컬 기준 브랜치({base or 'harness.json 에 없는 저장소'})를 찾지 못해 병합 여부를 잴 수 없다")
     if n is None:
@@ -517,10 +520,15 @@ def archive_codex(worktree: str, cfg: Optional[dict]) -> Optional[str]:
 def delete_branch(repo: str, branch: str, cfg: Optional[dict] = None) -> None:
     """-d 먼저. 병합 안 됨으로 실패하면 그 브랜치 커밋이 원격에 다 있을 때만 -D, 아니면 남기고 알린다.
     원격이 없는 저장소는 로컬 기준 브랜치에 다 병합됐을 때만 -D."""
+    entry = hl.repo_for_checkout(cfg, HARNESS_ROOT, Path(repo))
+    base = (entry or {}).get("base_branch", "")
+    if base and branch == base:
+        # 기준 브랜치는 어떤 경우에도 지우지 않는다(-d 도 본 체크아웃이 다른 브랜치면 성공해 버린다)
+        print(f"경고: 브랜치 {branch} 는 기준 브랜치라 남긴다", file=sys.stderr)
+        return
     if git(repo, "branch", "-d", branch).returncode == 0:
         return
-    entry = hl.repo_for_checkout(cfg, HARNESS_ROOT, Path(repo))
-    n, local = hl.unlanded_commits(Path(repo), branch, (entry or {}).get("base_branch", ""), hl.local_only(entry))
+    n, local = hl.unlanded_commits(Path(repo), branch, base, hl.local_only(entry))
     if n == 0:
         git(repo, "branch", "-D", branch)
     else:
