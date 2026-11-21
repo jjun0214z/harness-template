@@ -5,7 +5,8 @@
   1. 원래 체크아웃이 아니고 잠겨 있지 않다
   2. 최근 RECENT_MIN 분(기본 120) 안에 손댄 흔적이 없다(막 만든 작업 공간을 지우지 않으려는 장치)
   3. 커밋 안 된 변경이 없다
-  4. 그 작업 공간의 커밋이 원격(origin)의 어느 브랜치에든 전부 들어가 있다
+  4. 그 작업 공간의 커밋이 원격(origin)의 어느 브랜치에든 전부 들어가 있다.
+     원격이 없는 저장소(origin 없음 · harness.json 의 local_only)는 로컬 기준 브랜치에 전부 병합돼 있다
 저장소 원본(하네스 · `.repos/<dir>` · 연결한 폴더)은 워크트리가 아니므로 대상이 아니다.
 하나라도 어긋나면 지우지 않고 이유를 적는다. Orca 작업 폴더 아래 것은 Orca 에서 지우라고만 안내한다.
 끝에 임시 찌꺼기도 본다(cleanup_temp.py): 지운 · 없어진 작업 공간의 Claude 임시 폴더, 크롬 복제본, /tmp 검수 찌꺼기.
@@ -76,6 +77,7 @@ def main(argv=None):
     gone: list = []
     existing: list | None = []
     repos = [(cfg["harness_repo"]["dir"], args.root)] + [(r["dir"], hl.repo_path(r, parent)) for r in cfg["repos"]]
+    entries = {cfg["harness_repo"]["dir"]: cfg["harness_repo"], **{r["dir"]: r for r in cfg["repos"]}}
     # 저장소 원본(하네스 · .repos/<dir> · 연결한 폴더)은 어떤 경우에도 지우지 않는다. 워크트리 목록이 뭐라 하든 건너뛴다
     keep = {os.path.realpath(str(p)) for _, p in repos} | {os.path.realpath(str(parent))}
     for d, repo in repos:
@@ -84,7 +86,9 @@ def main(argv=None):
             existing = None  # 그 저장소의 워크트리를 모르니 고아 판정을 하지 않는다
             continue
         scanned += 1
-        git(repo, "fetch", "--quiet", "--prune", "origin")
+        entry = entries[d]
+        if git(repo, "remote", "get-url", "origin")[0] == 0:
+            git(repo, "fetch", "--quiet", "--prune", "origin")
         _, main_path = git(repo, "rev-parse", "--show-toplevel")
         code, _ = git(repo, "worktree", "list", "--porcelain")
         if code != 0:
@@ -109,13 +113,15 @@ def main(argv=None):
             if dirty:
                 print(f"남김 {label} : 커밋 안 된 변경 있음"); kept += 1; continue
             _, head = git(path, "rev-parse", "HEAD")
-            _, unpushed = git(repo, "rev-list", head, "--not", "--remotes=origin")
-            n = len(unpushed.splitlines())
+            n, local = hl.unlanded_commits(repo, head, entry["base_branch"], hl.local_only(entry))
+            if n is None:
+                print(f"남김 {label} : " + (f"로컬 기준 브랜치({entry['base_branch']})가 없어 병합 여부를 못 잼" if local else "원격에 없는 커밋 수를 못 잼")); kept += 1; continue
             if n:
-                print(f"남김 {label} : 원격에 없는 커밋 {n} 개"); kept += 1; continue
+                print(f"남김 {label} : " + (f"로컬 기준 브랜치({entry['base_branch']})에 병합 안 된 커밋 {n} 개" if local else f"원격에 없는 커밋 {n} 개")); kept += 1; continue
+            done = f"로컬 기준 브랜치({entry['base_branch']})에 다 병합됨" if local else "원격에 다 있음"
             if (os.path.realpath(path) + os.sep).startswith(orca_ws):
-                print(f"Orca {label} : 원격에 다 있음 → Orca 에서 지운다"); kept += 1; continue
-            print(f"지움 {label} : 원격에 다 있음")
+                print(f"Orca {label} : {done} → Orca 에서 지운다"); kept += 1; continue
+            print(f"지움 {label} : {done}")
             gone.append(path)
             if args.apply:
                 code, _ = git(repo, "worktree", "remove", path)

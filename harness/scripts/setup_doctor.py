@@ -129,12 +129,20 @@ def doctor(target: Path, kind: str, offline: bool, rep: Optional[Report] = None,
     parent = hl.repos_root(cfg, target)
     layout_step(cfg, target, parent, rep)
     record = created_record(target)
+    local_dirs = {r["dir"] for r in cfg["repos"] if hl.local_only(r)}
     for p, name in [(target, cfg["harness_repo"]["dir"])] + [(hl.repo_path(r, parent), r["dir"]) for r in cfg["repos"]]:
         if not (p / ".git").exists():
             rep.add(f"저장소 {name}", "없음", str(p))
             continue
         origin = run(["git", "remote", "get-url", "origin"], cwd=p)[0] == 0
-        rep.add(f"저장소 {name}", "통과", ("원격 연결됨" if origin else "로컬만(원격 없음)") + f" · {p}")
+        if name in local_dirs and p != target:
+            # local_only: 원격 없음이 정상이다. 원격이 붙어 있으면 설정과 어긋난 것이라 알린다(고치지는 않는다)
+            rep.add(f"저장소 {name}", "안내" if origin else "통과",
+                    ("설정은 local_only 인데 원격(origin)이 있다" if origin else "로컬만(local_only · 원격 없음이 정상)") + f" · {p}")
+            if origin:
+                rep.todo(f"{name}: harness.json 은 local_only 인데 origin 이 붙어 있다. 원격을 쓸 거면 local_only 를 지우고 remote 를 적은 뒤 generate, 아니면 git -C \"{p}\" remote remove origin")
+        else:
+            rep.add(f"저장소 {name}", "통과", ("원격 연결됨" if origin else "로컬만(원격 없음)") + f" · {p}")
         if not has_commit(p) and pending_first_commit(p, p == target, record) and not git_identity(p):
             rep.identity_todo(name)  # run 이 남긴 것과 같은 할 일 하나로 모인다
         elif not has_commit(p) and pending_first_commit(p, p == target, record):

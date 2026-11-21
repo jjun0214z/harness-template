@@ -7,7 +7,8 @@
   1. 링크된 워크트리다(본 체크아웃이 아니다)
   2. 이 명령을 부른 세션 자신의 워크트리가 아니다
   3. 커밋 안 된 변경이 없다
-  4. 원격(origin)에 없는 커밋이 0 개다
+  4. 원격(origin)에 없는 커밋이 0 개다. 원격이 없는 저장소(origin 없음 · harness.json 의 local_only)는
+     로컬 기준 브랜치에 병합 안 된 커밋이 0 개다(기준 브랜치를 모르면 멈춘다)
   5. (Orca) 그 Dispatch 가 끝난 상태다
   6. 그 워크트리에서 도는 Claude 세션(~/.claude/sessions/<pid>.json)이 모두 idle 이다. busy · 응답 대기 · 모르는 상태면 멈춘다
 
@@ -419,10 +420,15 @@ def check(worktree: Path, dispatch: Optional[str], orca: Optional[str], cfg: Opt
         raise Stop(f"커밋 안 된 변경이 있다(또는 상태를 못 읽음): {wt}")
     if git(wt, "remote", "get-url", "origin").returncode == 0:
         git(wt, "fetch", "--quiet", "origin")
-    unpushed = git(wt, "rev-list", "HEAD", "--not", "--remotes=origin")
-    if unpushed.returncode:
+    entry = hl.repo_for_checkout(cfg, HARNESS_ROOT, Path(common.stdout.strip()).parent)
+    base = (entry or {}).get("base_branch", "")
+    n, local = hl.unlanded_commits(Path(wt), "HEAD", base, hl.local_only(entry))
+    if n is None and local:
+        raise Stop(f"원격이 없는 저장소인데 로컬 기준 브랜치({base or 'harness.json 에 없는 저장소'})를 찾지 못해 병합 여부를 잴 수 없다")
+    if n is None:
         raise Stop("원격에 없는 커밋 수를 잴 수 없다")
-    n = len(unpushed.stdout.split())
+    if n and local:
+        raise Stop(f"원격이 없는 저장소다. 로컬 기준 브랜치({base})에 병합 안 된 커밋 {n}개가 있다")
     if n:
         raise Stop(f"원격에 없는 커밋 {n}개가 있다")
     if dispatch:
@@ -508,15 +514,18 @@ def archive_codex(worktree: str, cfg: Optional[dict]) -> Optional[str]:
     return None
 
 
-def delete_branch(repo: str, branch: str) -> None:
-    """-d 먼저. 병합 안 됨으로 실패하면 그 브랜치 커밋이 원격에 다 있을 때만 -D, 아니면 남기고 알린다."""
+def delete_branch(repo: str, branch: str, cfg: Optional[dict] = None) -> None:
+    """-d 먼저. 병합 안 됨으로 실패하면 그 브랜치 커밋이 원격에 다 있을 때만 -D, 아니면 남기고 알린다.
+    원격이 없는 저장소는 로컬 기준 브랜치에 다 병합됐을 때만 -D."""
     if git(repo, "branch", "-d", branch).returncode == 0:
         return
-    left = git(repo, "rev-list", branch, "--not", "--remotes=origin")
-    if left.returncode == 0 and not left.stdout.strip():
+    entry = hl.repo_for_checkout(cfg, HARNESS_ROOT, Path(repo))
+    n, local = hl.unlanded_commits(Path(repo), branch, (entry or {}).get("base_branch", ""), hl.local_only(entry))
+    if n == 0:
         git(repo, "branch", "-D", branch)
     else:
-        print(f"경고: 브랜치 {branch} 에 원격에 없는 커밋이 있어 남긴다", file=sys.stderr)
+        where = "로컬 기준 브랜치에 병합 안 된" if local else "원격에 없는"
+        print(f"경고: 브랜치 {branch} 에 {where} 커밋이 있어 남긴다", file=sys.stderr)
 
 
 class CleanupLock:
@@ -690,7 +699,7 @@ def remove(args, wt: str, cfg: Optional[dict], orca: Optional[str], name: str) -
     else:
         r = git(main_repo, "worktree", "remove", wt)
         if r.returncode == 0 and branch and branch != "HEAD":
-            delete_branch(main_repo, branch)
+            delete_branch(main_repo, branch, cfg)
     if r.returncode != 0:
         print(f"멈춤: 워크트리 지우기 실패: {(r.stderr or r.stdout).strip()[-200:]}", file=sys.stderr)
         return 1

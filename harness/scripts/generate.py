@@ -116,6 +116,13 @@ def workflow_readme(cfg: dict) -> str:
 """
 
 
+def remote_text(r: dict, none: str = "로컬만") -> str:
+    """표 · 작업자 정의에 적는 원격. local_only 는 원격이 없다는 것을 분명히 적는다(push 하지 않는다)."""
+    if hl.local_only(r):
+        return "로컬만(원격 없음 · push 안 함)"
+    return r.get("remote") or r.get("url") or none
+
+
 def works_short(cfg: dict) -> str:
     """문서에 짧게 적는 워크트리 폴더: 안쪽이면 하네스 기준 `.works`, 옆이면 프로젝트 폴더 기준 `.work`."""
     return hl.layout_of(cfg)["works_dir"] if hl.works_inside(cfg) else ".work"
@@ -158,7 +165,7 @@ def context(cfg: dict) -> Dict[str, str]:
     rows = ["| 폴더 | 원격 | 기준 브랜치 | 그 브랜치에 들어가면 | 작업자 |", "| --- | --- | --- | --- | --- |",
             f"| `.` ({h['dir']}) | {h.get('remote') or '-'} | `{h['base_branch']}` | 배포 없음. 하네스 규칙과 실행 장치 | 오케스트레이터 |"]
     for r in cfg["repos"]:
-        rows.append(f"| `{hl.repo_ref(r, cfg)}` | {r.get('remote') or r.get('url') or '로컬만'} | `{r['base_branch']}` | {md_escape(deploy_text(r))} | `{r['key']}-worker` |")
+        rows.append(f"| `{hl.repo_ref(r, cfg)}` | {remote_text(r)} | `{r['base_branch']}` | {md_escape(deploy_text(r))} | `{r['key']}-worker` |")
     if not cfg["repos"]:
         rows.append("")
         rows.append(f"> **코드 저장소가 아직 없다.** 나중에 하네스 폴더에서 `{py} harness/scripts/bootstrap.py add-repo` 로 더한다"
@@ -171,6 +178,8 @@ def context(cfg: dict) -> Dict[str, str]:
             ask = b in r.get("ask_on_push", [])
             meaning = (r.get("deploy") or {}).get(b, "")
             rows_ok = f"**{owner}께 매번 묻는다** (훅이 묻는다)" if ask else "상시"
+            if hl.local_only(r):
+                rows_ok = "push 없음(원격 없는 저장소. 로컬 기준 브랜치에 병합만)"
             deploy_rows.append(f"| {r['dir']} | `{b}` | {md_escape(meaning) or '-'} | {rows_ok} |")
     checks = ["| 저장소 | 검사 명령 |", "| --- | --- |"]
     for r in cfg["repos"]:
@@ -455,24 +464,30 @@ def worker_md(cfg: dict, r: dict) -> str:
     p, slug = cfg["project"], cfg["project"]["slug"]
     checks = " · ".join(f"`{c}`" for c in r["checks"]) or "저장소의 lint · 타입 검사 · 테스트 전체(명령은 harness.json 에 채운다)"
     desc = r.get("description") or r["dir"]
+    # local_only 저장소에는 origin 이 없다: fetch 를 빼고 로컬 기준 브랜치에서 워크트리를 만든다
+    local = hl.local_only(r)
+    fetch = "" if local else "git -C <저장소> fetch origin && "
+    base = hl.base_ref(r)
     if hl.works_inside(cfg):
         wt = f"{hl.works_text(cfg)}/<작업이름>/{r['dir']}"
         start = (f"이미 격리 워크트리 안이면 그대로 쓴다. 브리프가 워크트리(`{wt}`)를 알려 줬으면 그 안에서만 일한다. "
-                 f"없으면 `git -C <저장소> fetch origin && git -C <저장소> worktree add \"{wt}\" -b <작업이름> origin/{r['base_branch']}` 로 만들고 그 안에서만 일한다. "
+                 f"없으면 `{fetch}git -C <저장소> worktree add \"{wt}\" -b <작업이름> {base}` 로 만들고 그 안에서만 일한다. "
                  f"저장소 원본(`{hl.repo_ref(r, cfg)}`)에서 직접 고치지 않는다.")
     else:
-        start = (f"이미 격리 워크트리 안이면 그대로 쓴다. 아니면 `git -C <저장소> fetch origin && git -C <저장소> worktree add "
-                 f"<저장소 부모>/.work/{r['key']}-<과제-슬러그> -b <과제-슬러그> origin/{r['base_branch']}` 로 만들고 그 안에서만 일한다.")
+        start = (f"이미 격리 워크트리 안이면 그대로 쓴다. 아니면 `{fetch}git -C <저장소> worktree add "
+                 f"<저장소 부모>/.work/{r['key']}-<과제-슬러그> -b <과제-슬러그> {base}` 로 만들고 그 안에서만 일한다.")
+    base_line = (f"`{base}` (로컬 브랜치. 이 저장소는 원격이 없다: `origin/…` · `git fetch` · `git push` 를 쓰지 않는다. {deploy_text(r)})"
+                 if local else f"`{base}` ({deploy_text(r)})")
     return f"""---
 name: {r['key']}-worker
-description: {p['name']} {r['dir']} 저장소({r.get('remote') or r.get('url') or '로컬'}, {md_escape(desc)}) 과제를 맡는 작업자. 오케스트레이터가 {r['dir']} 저장소 과제 하나를 줄 때 쓴다.
+description: {p['name']} {r['dir']} 저장소({remote_text(r, '로컬')}, {md_escape(desc)}) 과제를 맡는 작업자. 오케스트레이터가 {r['dir']} 저장소 과제 하나를 줄 때 쓴다.
 ---
 
 너는 {p['name']} **{r['dir']} 저장소 작업자**다. 받은 과제 하나만 하고, 결론만 돌려준다.
 
 ## 자리
 - 저장소: 오케스트레이터에서 부르면 `{hl.repo_ref(r, cfg)}`(하네스 폴더 기준), 그 저장소 세션에서 부르면 현재 저장소
-- 기준 브랜치: `origin/{r['base_branch']}` ({deploy_text(r)})
+- 기준 브랜치: {base_line}
 - 시작: {start}
 
 ## 먼저 읽을 것
@@ -530,6 +545,9 @@ tools: Read, Grep, Glob, Bash
 
 def reviewer_md(cfg: dict) -> str:
     p, slug, owner = cfg["project"], cfg["project"]["slug"], cfg["project"]["owner_title"]
+    locals_ = [r["dir"] for r in cfg["repos"] if hl.local_only(r)]
+    # local_only 저장소가 있을 때만 한 줄 더한다(없으면 전과 글자 그대로 같다)
+    local_note = (f"\n   - 원격이 없는 저장소({' · '.join(locals_)})는 `origin/<기준 브랜치>` 대신 로컬 `<기준 브랜치>` 로 본다." if locals_ else "")
     return f"""---
 name: reviewer
 description: 작업자가 커밋한 변경을 push 전에 검토하는 검토원. 규칙 위반 · 범위 밖 수정 · 검증 누락을 찾고 판정만 돌려준다. 코드를 고치지 않는다. 오케스트레이터가 deploy 스킬 1번 단계에서 쓴다.
@@ -540,7 +558,7 @@ tools: Read, Grep, Glob, Bash
 
 ## 보는 순서
 1. **범위**: `git -C <저장소> log --oneline origin/<기준 브랜치>..<SHA>` 에 작업자 커밋만 있는가. 남의 커밋이 끼었으면 멈추고 보고한다.
-2. **diff**: `git -C <저장소> diff origin/<기준 브랜치>...<SHA>`. 과제 밖 수정이 섞였는가.
+2. **diff**: `git -C <저장소> diff origin/<기준 브랜치>...<SHA>`. 과제 밖 수정이 섞였는가.{local_note}
 3. **규칙**: `{slug}` 플러그인 스킬 중 해당하는 것(`absolute-rules` 는 항상). 대상 저장소에 `.claude/rules/` 가 있으면 그것도 본다(없는 하네스도 있다). 위반은 자리와 절 · 줄을 붙인다.
 4. **검증**: 작업자가 적은 검증 명령을 직접 다시 돌린다(읽기 전용 명령과 테스트 · 검사만). 출력이 없으면 검증 없음으로 본다.
 
@@ -663,6 +681,8 @@ def plugin_config(cfg: dict) -> dict:
     hid = h.get("remote") or h["dir"]
     repos[hid] = {"harness": True, "base": h["base_branch"], "ask": {}}
     for r in cfg["repos"]:
+        if hl.local_only(r):
+            continue  # 원격이 없으니 push 가드가 맞춰 볼 항목도 없다(폴더 이름으로 넣으면 같은 이름의 남의 원격에 걸린다)
         rid = r.get("remote") or r["dir"]
         repos[rid] = {"ask": {b: (r.get("deploy") or {}).get(b, "") for b in r["ask_on_push"]}}
     protected = (cfg.get("rules") or {}).get("protected") or list(hl.DEFAULT_PROTECTED)

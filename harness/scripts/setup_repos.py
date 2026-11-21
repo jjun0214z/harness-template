@@ -207,9 +207,11 @@ def repos_step(cfg: dict, parent: Path, rep: Report, offline: bool, record: dict
 
 
 def remote_step(cfg: dict, target: Path, parent: Path, rep: Report, offline: bool, create: bool) -> None:
-    """원격 연결. origin 이 있으면 건드리지 않는다. gh 가 있고 --create-github 면 없는 원격을 만들고 push, 있으면 연결만."""
+    """원격 연결. origin 이 있으면 건드리지 않는다. gh 가 있고 --create-github 면 없는 원격을 만들고 push, 있으면 연결만.
+    local_only 저장소는 아예 대상이 아니다: 원격을 만들지도, push 하지도, 「원격 연결」 할 일을 내지도 않는다."""
     rows = [(cfg["harness_repo"]["dir"], target, cfg["harness_repo"].get("remote"), cfg["harness_repo"]["base_branch"])]
-    rows += [(r["dir"], hl.repo_path(r, parent), r.get("remote"), r["base_branch"]) for r in cfg["repos"] if r["source"] == "new"]
+    rows += [(r["dir"], hl.repo_path(r, parent), r.get("remote"), r["base_branch"]) for r in cfg["repos"]
+             if r["source"] == "new" and not hl.local_only(r)]
     record = created_record(target)
     foreign = {r["dir"] for r in cfg["repos"] if r["source"] == "new" and (hl.repo_path(r, parent) / ".git").exists()
                and not made_by_us(hl.repo_path(r, parent), record)}

@@ -49,7 +49,8 @@ def ask_repo(org: str, n: int, reader: Callable[[str], str] = input, detail: boo
     if not key:
         return None
     r = {"key": key}
-    how = ask("  (1) 새로 만들기 (2) 원격 주소에서 받기(clone) (3) 이 컴퓨터에 있는 폴더 연결", "1", reader)
+    how = ask("  (1) 새로 만들기 (2) 원격 주소에서 받기(clone) (3) 이 컴퓨터에 있는 폴더 연결 "
+              "(4) 새로 만들되 이 컴퓨터에만 둔다(원격 없음 · push 안 함)", "1", reader)
     if how == "3":
         r["source"] = "local"
         while True:
@@ -66,9 +67,12 @@ def ask_repo(org: str, n: int, reader: Callable[[str], str] = input, detail: boo
     else:
         if how == "2":
             r["source"], r["url"] = "clone", ask("  원격 주소", "", reader)
+        if how == "4":
+            r["local_only"] = True  # 원격을 묻지도 채우지도 않는다
         if detail:
             r["dir"] = ask("  폴더", key, reader)
-            r["remote"] = ask("  GitHub 원격(조직/이름, 없으면 빈칸)", f"{org}/{key}" if org else "", reader)
+            if how != "4":
+                r["remote"] = ask("  GitHub 원격(조직/이름, 없으면 빈칸)", f"{org}/{key}" if org else "", reader)
             r["base_branch"] = ask("  기준 브랜치", "main", reader)
     if detail:
         r["description"] = ask("  한 줄 설명", "", reader)
@@ -82,7 +86,8 @@ def ask_repo(org: str, n: int, reader: Callable[[str], str] = input, detail: boo
             b, m = pair.split("=", 1)
             deploy[b.strip()] = m.strip()
     r["deploy"] = deploy
-    r["ask_on_push"] = [s.strip() for s in ask("  push 때 물을 브랜치(쉼표로, 없으면 빈칸)", "", reader).split(",") if s.strip()]
+    if not r.get("local_only"):  # 원격이 없으면 push 도 없다
+        r["ask_on_push"] = [s.strip() for s in ask("  push 때 물을 브랜치(쉼표로, 없으면 빈칸)", "", reader).split(",") if s.strip()]
     checks = ask("  검사 명령(쉼표로, 빈칸이면 스택 기본값)", "", reader)
     if checks:
         r["checks"] = [s.strip() for s in checks.split(",") if s.strip()]

@@ -142,11 +142,12 @@ def normalize(raw: dict) -> dict:
             r["path"] = str(Path(os.path.expanduser(r["path"])).resolve())
             r.setdefault("dir", Path(r["path"]).name)
             r.setdefault("base_branch", detect_base_branch(Path(r["path"])) or "main")
-            if not r.get("remote"):
+            if not r.get("remote") and not local_only(r):
                 r["remote"] = github_remote(Path(r["path"])) or ""
             r.setdefault("connect_files", False)
         r.setdefault("dir", r.get("key", ""))
-        if not r.get("remote") and org:
+        # local_only(이 컴퓨터에만 두는 저장소)는 원격을 조직 이름으로 채우지 않는다. 없는 원격을 있다고 안내하게 된다
+        if not r.get("remote") and org and not local_only(r):
             r["remote"] = f"{org}/{r.get('key', '')}"
         r.setdefault("base_branch", "main")
         r.setdefault("description", "")
@@ -209,6 +210,15 @@ def validate(cfg: dict) -> List[str]:
             errs.append(f"{where}.remote 는 <조직>/<저장소> 형식이다")
         if r.get("source") == "clone" and not r.get("remote") and not r.get("url"):
             errs.append(f"{where} 는 clone 인데 remote(또는 url) 가 없다")
+        if "local_only" in r and not isinstance(r["local_only"], bool):
+            errs.append(f"{where}.local_only 는 true 또는 false 다")
+        elif local_only(r):
+            if r.get("remote") or r.get("url"):
+                errs.append(f"{where} 는 local_only(이 컴퓨터에만 둔다)인데 remote · url 이 적혀 있다. 둘 중 하나만 남긴다")
+            if r.get("source") == "clone":
+                errs.append(f"{where} 는 local_only 인데 source 가 clone(원격 받기)이다")
+            if r.get("ask_on_push"):
+                errs.append(f"{where} 는 local_only 인데 ask_on_push 가 있다(push 할 원격이 없다)")
         if r.get("stack") not in STACKS:
             errs.append(f"{where}.stack 은 {', '.join(STACKS)} 중 하나다")
         if r.get("source") not in ("new", "clone", "local"):
@@ -415,6 +425,56 @@ def github_remote(path: Path) -> str:
     url = _git_out(path, "remote", "get-url", "origin")
     m = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$", url)
     return f"{m.group(1)}/{m.group(2)}" if m else ""
+
+
+def local_only(repo: Optional[dict]) -> bool:
+    """원격 없이 이 컴퓨터에만 두는 저장소인가(harness.json repos[].local_only). 참이면 원격을 만들지도 안내하지도 않는다."""
+    return bool(repo) and repo.get("local_only") is True
+
+
+def base_ref(repo: dict) -> str:
+    """문서에 적는 기준 ref: 원격이 있으면 origin/<기준>, local_only 면 로컬 <기준>."""
+    return repo["base_branch"] if local_only(repo) else f"origin/{repo['base_branch']}"
+
+
+def unlanded_commits(repo: Path, rev: str, base: str = "", force_local: bool = False) -> Tuple[Optional[int], bool]:
+    """rev 의 커밋 중 「들어갈 곳」에 아직 없는 것의 수와, 로컬 기준으로 쟀는지. 못 재면 (None, …).
+    origin 이 있으면 원격(origin)의 어느 브랜치에든 있는가로 잰다(전과 같다).
+    origin 이 없거나 force_local(local_only 저장소)이면 로컬 기준 브랜치 <base> 에 병합됐는가로 잰다.
+    base 를 모르거나 그 브랜치가 없으면 못 잰 것이다(지우지 않는 쪽)."""
+    def run(*args):
+        try:
+            return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+    has_origin = run("remote", "get-url", "origin")
+    if has_origin is None:
+        return None, False
+    local = force_local or has_origin.returncode != 0
+    if local:
+        known = run("rev-parse", "--verify", "--quiet", f"refs/heads/{base}^{{commit}}") if base else None
+        if known is None or known.returncode != 0:
+            return None, True
+        r = run("rev-list", rev, "--not", f"refs/heads/{base}")
+    else:
+        r = run("rev-list", rev, "--not", "--remotes=origin")
+    if r is None or r.returncode != 0:
+        return None, local
+    return len(r.stdout.split()), local
+
+
+def repo_for_checkout(cfg: Optional[dict], harness_root: Path, main_checkout: Path) -> Optional[dict]:
+    """본 체크아웃 폴더가 설정의 어느 저장소인가. 하네스 자신이면 harness_repo, 못 찾으면 None."""
+    if not cfg:
+        return None
+    want = os.path.realpath(str(main_checkout))
+    if os.path.realpath(str(harness_root)) == want:
+        return cfg["harness_repo"]
+    parent = repos_root(cfg, harness_root)
+    for r in cfg["repos"]:
+        if os.path.realpath(str(repo_path(r, parent))) == want:
+            return r
+    return None
 
 
 def repo_url(repo: dict) -> str:
