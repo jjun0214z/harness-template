@@ -71,14 +71,32 @@ def session_start(root):
     sys.exit(0)
 
 
+# harnesslib.LAYOUT_RESERVED · layout_dir_ok 와 같은 목록 · 같은 조건이다(훅은 하네스 스크립트를 import 하지 않는다). 고치면 둘 다 고친다.
+LAYOUT_RESERVED = (".git", ".claude", ".claude-plugin", ".codex", ".agents", ".github", ".work",
+                   ".gitignore", ".gitattributes", ".harness-manifest.json", ".harness-template", ".env", ".ds_store")
+
+
 def inner_dirs(root):
-    """안쪽 배치의 작업 레포 · 워크트리 폴더 이름(예: .repos · .works). 옆 배치 · 옛 설정이면 빈 목록."""
+    """안쪽 배치의 작업 레포 · 워크트리 폴더 이름(예: .repos · .works). 옆 배치 · 옛 설정이면 빈 목록.
+    설정이 검증 조건에 하나라도 안 맞으면 빈 목록: 그 폴더의 변경을 「하네스 변경 아님」으로 걸러 주지 않는다."""
     try:
         with open(os.path.join(root, "harness.json"), encoding="utf-8") as f:
-            lay = json.load(f).get("layout") or {}
+            lay = json.load(f).get("layout")
     except (OSError, ValueError, AttributeError):
         return []
-    return [v for v in (lay.get("repos_dir"), lay.get("works_dir")) if isinstance(v, str) and v and not v.startswith("..")]
+    if not isinstance(lay, dict) or set(lay) != {"repos_dir", "works_dir"}:
+        return []
+
+    def ok(v):
+        return (isinstance(v, str) and v.startswith(".") and v not in (".", "..") and len(v) <= 80 and v.strip() == v
+                and not any(c in v for c in '/\\:*?"<>|') and v.lower() not in LAYOUT_RESERVED)
+
+    a, b = lay["repos_dir"], lay["works_dir"]
+    if not ((a == ".." or ok(a)) and (b == "../.work" or ok(b))):
+        return []
+    if ok(a) and ok(b) and a.lower() == b.lower():
+        return []
+    return [v for v in (a, b) if ok(v)]
 
 
 def repos_line(root):

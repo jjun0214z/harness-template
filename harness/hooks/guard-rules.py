@@ -40,10 +40,31 @@ def load_settings():
     rules = cfg.get("rules") or {}
     protected = tuple(rules.get("protected") or DEFAULT_PROTECTED)
     owner = (cfg.get("project") or {}).get("owner_title") or "결정권자"
-    lay = cfg.get("layout") if isinstance(cfg.get("layout"), dict) else {}
-    # 안쪽 배치의 작업 레포 · 워크트리 폴더 이름(예: .repos · .works). 그 안은 하네스 규칙 파일이 아니다
-    inner = tuple(v for v in (lay.get("repos_dir"), lay.get("works_dir")) if isinstance(v, str) and v and not v.startswith(".."))
-    return protected, owner, inner
+    return protected, owner, inner_layout_dirs(cfg)
+
+
+# harnesslib.LAYOUT_RESERVED · layout_dir_ok 와 같은 목록 · 같은 조건이다(훅은 하네스 스크립트를 import 하지 않는다). 고치면 둘 다 고친다.
+LAYOUT_RESERVED = (".git", ".claude", ".claude-plugin", ".codex", ".agents", ".github", ".work",
+                   ".gitignore", ".gitattributes", ".harness-manifest.json", ".harness-template", ".env", ".ds_store")
+
+
+def inner_layout_dirs(cfg):
+    """안쪽 배치의 작업 레포 · 워크트리 폴더 이름(예: .repos · .works). 그 안은 하네스 규칙 파일이 아니다.
+    설정이 검증 조건에 하나라도 안 맞으면 빈 튜플: 보호를 풀지 않는다(`harness` · `.claude` · `plugins/p` 같은 값으로 규칙 파일이 열리지 않게)."""
+    lay = cfg.get("layout") if isinstance(cfg, dict) else None
+    if not isinstance(lay, dict) or set(lay) != {"repos_dir", "works_dir"}:
+        return ()
+
+    def ok(v):
+        return (isinstance(v, str) and v.startswith(".") and v not in (".", "..") and len(v) <= 80 and v.strip() == v
+                and not any(c in v for c in '/\\:*?"<>|') and v.lower() not in LAYOUT_RESERVED)
+
+    a, b = lay["repos_dir"], lay["works_dir"]
+    if not ((a == ".." or ok(a)) and (b == "../.work" or ok(b))):
+        return ()
+    if ok(a) and ok(b) and a.lower() == b.lower():
+        return ()
+    return tuple(v for v in (a, b) if ok(v))
 
 
 PROTECTED, OWNER, INNER_DIRS = load_settings()

@@ -80,7 +80,16 @@ DEFAULT_OWNER_TITLE = "주임님"  # 결정권자 호칭 기본값. 셋업에서
 # 옆(layout 칸이 없던 옛 설정): <하네스>/../<dir> · <하네스>/../.work/…  폴더를 자동으로 옮기지 않는다.
 LAYOUT_INSIDE = {"repos_dir": ".repos", "works_dir": ".works"}
 LAYOUT_BESIDE = {"repos_dir": "..", "works_dir": "../.work"}
-LAYOUT_RESERVED = (".git", ".claude", ".claude-plugin", ".codex", ".agents", ".github")
+# 배치 폴더 이름으로 못 쓰는 것(대소문자 무시): 하네스가 이미 쓰는 폴더 · 관리 파일 · 옛 워크트리 폴더 이름.
+# 규칙 보호 훅(harness/hooks/guard-rules.py · harness-sync.py)이 같은 목록과 같은 조건을 쓴다. 고치면 둘 다 고친다.
+LAYOUT_RESERVED = (".git", ".claude", ".claude-plugin", ".codex", ".agents", ".github", ".work",
+                   ".gitignore", ".gitattributes", ".harness-manifest.json", ".harness-template", ".env", ".ds_store")
+
+
+def layout_dir_ok(name: object) -> bool:
+    """안쪽 배치 폴더 이름으로 쓸 수 있나: 점으로 시작하는 폴더 이름 하나(경로 구분자 없음)이고 예약 이름이 아니다."""
+    return (isinstance(name, str) and safe_dir_name(name) and name.startswith(".")
+            and name.lower() not in LAYOUT_RESERVED)
 
 
 def default_config() -> dict:
@@ -115,6 +124,9 @@ def normalize(raw: dict) -> dict:
             cfg[key] = merged
         else:
             cfg[key] = value
+    if "layout" in raw:
+        # 배치는 기본값과 섞지 않는다: 빈 객체 · 한쪽 키만 있는 설정을 조용히 채우면 파일을 직접 읽는 훅과 어긋난다(validate 가 오류로 알린다)
+        cfg["layout"] = dict(raw["layout"]) if isinstance(raw["layout"], dict) else raw["layout"]
     org = cfg["project"].get("github_org") or ""
     hr = cfg["harness_repo"]
     if hr.get("source") == "local" and hr.get("path"):
@@ -226,17 +238,20 @@ def validate(cfg: dict) -> List[str]:
     if "{id}" not in str(wf.get("branch", "")):
         errs.append("workflow.branch 에는 {id} 가 들어가야 한다(예: feature/{id}-{slug})")
     lay = cfg.get("layout")
-    if not isinstance(lay, dict):
-        errs.append("layout 은 {repos_dir, works_dir} 다")
+    if not isinstance(lay, dict) or set(lay) != {"repos_dir", "works_dir"}:
+        errs.append("layout 은 {repos_dir, works_dir} 두 칸을 모두 적는다"
+                    f"(안쪽 배치 예: {json.dumps(LAYOUT_INSIDE)}. 옛 옆 배치를 쓰려면 칸을 통째로 지운다)")
     else:
         for k, beside in (("repos_dir", LAYOUT_BESIDE["repos_dir"]), ("works_dir", LAYOUT_BESIDE["works_dir"])):
             v = lay.get(k)
             if v == beside:
                 continue
-            if not isinstance(v, str) or not safe_dir_name(v) or not v.startswith(".") or v in LAYOUT_RESERVED:
-                errs.append(f"layout.{k} 는 하네스 안의 점으로 시작하는 폴더 이름(예: {LAYOUT_INSIDE[k]}) 또는 옛 옆 배치 값 `{beside}` 다")
-        if lay.get("repos_dir") == lay.get("works_dir"):
-            errs.append("layout.repos_dir 와 layout.works_dir 는 달라야 한다")
+            if not layout_dir_ok(v):
+                errs.append(f"layout.{k} 는 하네스 안의 점으로 시작하는 폴더 이름(예: {LAYOUT_INSIDE[k]}) 또는 옛 옆 배치 값 `{beside}` 다"
+                            f"(하네스가 쓰는 이름 {' · '.join(LAYOUT_RESERVED[:7])} 과 관리 파일 이름은 안 된다. 대소문자만 달라도 같다)")
+        a, b = lay.get("repos_dir"), lay.get("works_dir")
+        if isinstance(a, str) and isinstance(b, str) and a.lower() == b.lower():
+            errs.append("layout.repos_dir 와 layout.works_dir 는 달라야 한다(대소문자만 다른 것도 같은 폴더다)")
     if cfg.get("runner") not in runners.RUNNERS:
         errs.append(f"runner 는 {' · '.join(runners.RUNNERS)} 중 하나다")
     return errs
@@ -308,9 +323,13 @@ def repo_path(repo: dict, parent: Path) -> Path:
 
 
 def layout_of(cfg: Optional[dict]) -> dict:
-    """배치 설정. cfg 가 없거나 layout 칸이 없으면 옛 옆 배치."""
+    """배치 설정. cfg 가 없거나 layout 칸이 없으면 옛 옆 배치.
+    검증(validate)을 거치지 않은 설정에서 쓸 수 없는 값은 옛 옆 배치 값으로 본다(하네스 폴더 안의 엉뚱한 자리를 가리키지 않게)."""
     lay = (cfg or {}).get("layout")
-    return dict(LAYOUT_BESIDE, **lay) if isinstance(lay, dict) else dict(LAYOUT_BESIDE)
+    out = dict(LAYOUT_BESIDE)
+    if isinstance(lay, dict) and set(lay) == {"repos_dir", "works_dir"}:
+        out.update({k: v for k, v in lay.items() if layout_dir_ok(v)})
+    return out
 
 
 def repos_inside(cfg: Optional[dict]) -> bool:
