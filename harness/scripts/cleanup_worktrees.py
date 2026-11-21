@@ -6,6 +6,7 @@
   2. 최근 RECENT_MIN 분(기본 120) 안에 손댄 흔적이 없다(막 만든 작업 공간을 지우지 않으려는 장치)
   3. 커밋 안 된 변경이 없다
   4. 그 작업 공간의 커밋이 원격(origin)의 어느 브랜치에든 전부 들어가 있다
+저장소 원본(하네스 · `.repos/<dir>` · 연결한 폴더)은 워크트리가 아니므로 대상이 아니다.
 하나라도 어긋나면 지우지 않고 이유를 적는다. Orca 작업 폴더 아래 것은 Orca 에서 지우라고만 안내한다.
 끝에 임시 찌꺼기도 본다(cleanup_temp.py): 지운 · 없어진 작업 공간의 Claude 임시 폴더, 크롬 복제본, /tmp 검수 찌꺼기.
 미리보기가 찌꺼기 목록 · 합계를 계획에 적고 --apply 는 그 계획 안에서만 지운다(Windows 는 건너뛴다).
@@ -68,13 +69,16 @@ def main(argv=None):
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2], help="하네스 저장소 루트")
     args = ap.parse_args(argv)
     cfg = hl.load_config(args.root / hl.CONFIG_NAME)
-    parent = hl.git_common_parent(args.root) or args.root.parent
+    parent = hl.repos_root(cfg, args.root)
     recent = int(os.environ.get("RECENT_MIN", "120"))
     orca_ws = os.path.realpath(os.path.expanduser(cfg["orca"]["workspaces_dir"])) + os.sep
     removed = kept = scanned = 0
     gone: list = []
     existing: list | None = []
-    for d, repo in [(cfg["harness_repo"]["dir"], args.root)] + [(r["dir"], hl.repo_path(r, parent)) for r in cfg["repos"]]:
+    repos = [(cfg["harness_repo"]["dir"], args.root)] + [(r["dir"], hl.repo_path(r, parent)) for r in cfg["repos"]]
+    # 저장소 원본(하네스 · .repos/<dir> · 연결한 폴더)은 어떤 경우에도 지우지 않는다. 워크트리 목록이 뭐라 하든 건너뛴다
+    keep = {os.path.realpath(str(p)) for _, p in repos} | {os.path.realpath(str(parent))}
+    for d, repo in repos:
         if not (repo / ".git").exists():
             print(f"건너뜀 [{d}] 저장소가 없다: {repo}")
             existing = None  # 그 저장소의 워크트리를 모르니 고아 판정을 하지 않는다
@@ -89,7 +93,7 @@ def main(argv=None):
             if existing is not None:
                 existing.append(wt["path"])
             path, branch = wt["path"], wt["branch"]
-            if os.path.realpath(path) == os.path.realpath(main_path):
+            if os.path.realpath(path) == os.path.realpath(main_path) or os.path.realpath(path) in keep:
                 continue
             label = f"[{d}] {path} ({branch or 'detached'})"
             if wt["locked"]:
@@ -122,7 +126,7 @@ def main(argv=None):
         print("--- 임시 찌꺼기 ---")
         if gone:
             ct.claude_tmp(gone, args.apply)
-        roots = [orca_ws.rstrip(os.sep), str(parent / ".work")]
+        roots = [orca_ws.rstrip(os.sep)] + hl.work_roots(cfg, args.root)
         ct.sweep(args.apply, [os.path.basename(p) for p in gone], roots, existing)
         ct.chrome_clones(args.apply)
     mode = "적용" if args.apply else "미리보기 (지우려면 --apply)"

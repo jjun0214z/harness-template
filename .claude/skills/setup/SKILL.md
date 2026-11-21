@@ -28,6 +28,7 @@ python 명령은 이 기기에 있는 것을 쓴다(mac · Linux `python3`, Wind
 
 ## 2. 설정 파일을 쓴다
 답을 `harness.json` 으로 적는다(형식: 템플릿 `examples/harness.example.json`). 사용자에게 보여 주고 확인받는다.
+**`"layout": {"repos_dir": ".repos", "works_dir": ".works"}` 를 꼭 넣는다**(작업 레포 · 워크트리를 하네스 폴더 안에 둔다). 이 칸이 없으면 옛 옆 배치(`../<폴더>` · `../.work`)로 읽힌다.
 
 ## 3. 검증
 `PY harness/scripts/bootstrap.py check --config harness.json` 이 오류 0 이어야 한다.
@@ -37,7 +38,7 @@ python 명령은 이 기기에 있는 것을 쓴다(mac · Linux `python3`, Wind
 
 ## 5. 끝까지 실행
 `PY harness/scripts/bootstrap.py run --config harness.json --root <프로젝트 루트> --non-interactive [--yes] [--create-github]`
-- 프로젝트 루트 기본값은 **사용자가 명령을 실행한 폴더 아래 `<슬러그>/`** 다. 사용자에게 「여기에 만듭니다: <경로>」를 보여 주고 확인받은 뒤 `--root` 로 넘긴다. 그 안에 하네스(`<하네스 폴더>/`)와 새 저장소를 만든다.
+- 프로젝트 루트 기본값은 **사용자가 명령을 실행한 폴더 아래 `<슬러그>/`** 다. 사용자에게 「여기에 만듭니다: <경로>」를 보여 주고 확인받은 뒤 `--root` 로 넘긴다. 그 안에 하네스(`<하네스 폴더>/`)를 만들고, 새 저장소는 하네스 안 `.repos/<폴더>` 에 만든다(워크트리는 `.works/`).
 - 저장소는 새로 만든다(`git init` · 뼈대 · 첫 커밋). 이미 있는 폴더는 덮지 않는다.
 - `--create-github` 은 gh 로그인이 있을 때만 비공개 원격 · 라벨을 만든다. 사용자에게 먼저 묻는다. 없으면 「나중에 할 일」에 연결 명령이 남는다.
 

@@ -95,12 +95,18 @@ def made_by_us(dest: Path, record: dict) -> bool:
 
 def repo_skeleton(cfg: dict, r: dict) -> dict:
     """새 코드 저장소의 최소 뼈대. 하네스 플러그인을 켜는 설정까지."""
-    slug, harness = cfg["project"]["slug"], cfg["harness_repo"]["dir"]
+    slug = cfg["project"]["slug"]
+    scope = ""
+    if hl.repos_inside(cfg):
+        # 이 저장소는 하네스 폴더 안에 있어 하네스의 CLAUDE.md · AGENTS.md 가 위쪽 폴더 지침으로 같이 읽힌다
+        scope = ("\n이 폴더는 하네스 폴더 안에 있어 하네스의 `CLAUDE.md` 도 같이 읽힌다. 거기 적힌 오케스트레이터 역할"
+                 "(코드를 직접 고치지 않는다)은 **하네스 루트에서 연 세션**의 것이다. 여기와 이 저장소의 워크트리에서 연 세션은 "
+                 "**이 저장소 작업자**다: 받은 과제 범위 안에서 코드를 고치고 커밋까지 한다(push 는 오케스트레이터).\n")
     files = {
         "README.md": f"# {r['dir']}\n\n{r.get('description') or ''}\n",
         ".gitignore": ".DS_Store\n__pycache__/\nnode_modules/\n" + hl.SECRET_IGNORE,
         "CLAUDE.md": (f"# {r['dir']}\n\n{cfg['project']['name']} 의 {r['dir']} 저장소다. 작업 규칙은 `{slug}` 플러그인 스킬을 따른다.\n"
-                      f"오케스트레이터(하네스)는 `../{harness}` 다. 기준 브랜치 `{r['base_branch']}`.\n"),
+                      f"오케스트레이터(하네스)는 `{hl.harness_ref_from_repo(cfg)}` 다. 기준 브랜치 `{r['base_branch']}`.\n" + scope),
         "AGENTS.md": f"# {r['dir']}\n\n같은 폴더의 `CLAUDE.md` 를 처음부터 끝까지 읽고 따른다. 설치된 `{slug}` 플러그인의 스킬을 쓴다.\n",
     }
     if hl.has(cfg, "claude"):

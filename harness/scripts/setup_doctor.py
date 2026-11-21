@@ -79,6 +79,31 @@ def blocks_step(cfg: dict, target: Path, rep: Report) -> None:
     stale_note(cfg, w, rep)
 
 
+def layout_step(cfg: dict, target: Path, parent: Path, rep: Report) -> None:
+    """배치 한 줄(안쪽/옆)과, 설정과 실제 폴더가 어긋난 곳 · 옛 `.work` 에 남은 워크트리를 「안내」로 알린다. 아무것도 옮기지 않는다."""
+    rep.add("배치", "안내", hl.layout_label(cfg))
+    main = hl.harness_main(target)
+    # 설정과 반대쪽 자리: 안쪽이면 하네스 옆, 옆이면 하네스 안 .repos
+    other = main.parent if hl.repos_inside(cfg) else main / hl.LAYOUT_INSIDE["repos_dir"]
+    for r in cfg["repos"]:
+        if r.get("source") == "local":
+            continue  # 연결한 폴더는 경로 그대로 쓴다(배치와 무관)
+        want, there = hl.repo_path(r, parent), other / r["dir"]
+        if not (want / ".git").exists() and (there / ".git").exists():
+            where = "안쪽" if hl.repos_inside(cfg) else "옆"
+            rep.add(f"배치 어긋남 {r['dir']}", "안내", f"설정은 {where}({want})인데 저장소는 {there} 에 있다")
+            rep.todo(f"{r['dir']} 자리 맞추기: 폴더를 {want} 로 옮기거나(옮긴 뒤 `git -C \"{want}\" worktree repair`), "
+                     f"harness.json 의 layout 을 실제 자리에 맞춘다. 그다음 `{generate_cmd(cfg)}`. 자동으로 옮기지 않는다")
+    old = hl.old_work_dir(cfg, target)
+    if old and old.is_dir():
+        left = sorted(p.name for p in old.iterdir() if p.is_dir())
+        if left:
+            shown = ", ".join(left[:5]) + (f" 외 {len(left) - 5}개" if len(left) > 5 else "")
+            rep.add("옛 워크트리 폴더", "안내", f"{old} 에 남은 것 {len(left)}개: {shown}")
+            rep.todo(f"옛 워크트리 폴더 {old}: 끝난 작업이면 `{generate_cmd(cfg).replace('generate.py', 'cleanup_worktrees.py')}` 로 미리 보고 치운다. "
+                     f"쓰는 중이면 그대로 둬도 된다(새 워크트리는 {hl.works_root(cfg, target)} 에 생긴다)")
+
+
 def doctor(target: Path, kind: str, offline: bool, rep: Optional[Report] = None, tools: bool = True) -> Report:
     rep = rep or Report()
     rep.add("운영체제", "안내", f"{kind} · python {sys.version.split()[0]}")
@@ -101,7 +126,8 @@ def doctor(target: Path, kind: str, offline: bool, rep: Optional[Report] = None,
     if stale:
         rep.todo("\n".join(gen.stale_lines(stale)))
     hook_smoke(cfg, target, rep)
-    parent = hl.git_common_parent(target) or target.parent
+    parent = hl.repos_root(cfg, target)
+    layout_step(cfg, target, parent, rep)
     record = created_record(target)
     for p, name in [(target, cfg["harness_repo"]["dir"])] + [(hl.repo_path(r, parent), r["dir"]) for r in cfg["repos"]]:
         if not (p / ".git").exists():

@@ -79,6 +79,10 @@
     "cleanup",
     "codex-desktop"
   ],
+  "layout": {
+    "repos_dir": ".repos",
+    "works_dir": ".works"
+  },
   "orca": {
     "workspaces_dir": "~/orca/workspaces"
   },

@@ -101,7 +101,7 @@ def workflow_readme(cfg: dict) -> str:
     cmd = f"{py} harness/scripts/work.py"
     return f"""# 작업 문서
 
-작업 하나 = 번호 하나(`{wf['prefix']}-0001`) = 이 폴더의 문서 한 장 + 저장소별 워크트리(`.work/<번호-제목>/<저장소>`).
+작업 하나 = 번호 하나(`{wf['prefix']}-0001`) = 이 폴더의 문서 한 장 + 저장소별 워크트리(`{works_short(cfg)}/<번호-제목>/<저장소>`).
 
 | 하고 싶은 것 | 명령 |
 | --- | --- |
@@ -116,6 +116,41 @@ def workflow_readme(cfg: dict) -> str:
 """
 
 
+def works_short(cfg: dict) -> str:
+    """문서에 짧게 적는 워크트리 폴더: 안쪽이면 하네스 기준 `.works`, 옆이면 프로젝트 폴더 기준 `.work`."""
+    return hl.layout_of(cfg)["works_dir"] if hl.works_inside(cfg) else ".work"
+
+
+def worktree_example(cfg: dict) -> str:
+    """손으로 워크트리를 만들 때의 자리(git-rules 스킬 · 작업자 정의가 같이 쓴다)."""
+    if hl.works_inside(cfg):
+        return f"{hl.works_text(cfg)}/<작업이름>/<저장소 폴더>"
+    return "<프로젝트 폴더>/.work/<저장소>-<슬러그>"
+
+
+def repo_guard(cfg: dict) -> str:
+    """저장소 0개 가드 한 문장. CLAUDE.md · core.md 가 같이 쓴다(세션 시작 줄은 harness-sync 훅이 낸다)."""
+    py = cfg["platform"]["python"]
+    how = (f"작업은 `{py} harness/scripts/work.py new` 로 열고 작업자 → 검토원(`reviewer`)을 거친다"
+           if hl.has_pack(cfg, "workflow") else "작업은 작업자에게 맡기고 검토원(`reviewer`)을 거친다")
+    now = "" if cfg["repos"] else " **지금 0개다.**"
+    return (f"**등록된 저장소가 0개면 오케스트레이터는 만드는 일을 직접 하지 않는다.**{now} "
+            f"먼저 저장소 추가(`{py} harness/scripts/bootstrap.py add-repo`)를 안내한다. {how}.")
+
+
+def role_scope(cfg: dict) -> str:
+    """안쪽 배치에서 하네스 지침이 `.repos/` · `.works/` 세션에 겹쳐 읽힐 때의 역할 구분. 옆 배치면 빈 문자열."""
+    lay = hl.layout_of(cfg)
+    dirs = [f"`{lay[k]}/`" for k, on in (("repos_dir", hl.repos_inside(cfg)), ("works_dir", hl.works_inside(cfg))) if on]
+    if not dirs:
+        return ""
+    where = " · ".join(dirs)
+    return (f"이 지침의 오케스트레이터 역할은 **하네스 루트에서 연 세션**에만 해당한다. {where} 아래에서 연 세션은 "
+            "그 저장소의 **작업자**다(하네스 지침이 위쪽 폴더 지침으로 같이 읽힐 뿐이다). "
+            "작업자는 「코드를 직접 고치지 않는다」에 묶이지 않고 그 저장소의 `CLAUDE.md` · `<키>-worker` 정의 · 받은 브리프를 따라 "
+            "그 자리에서 코드를 고친다. push 는 하지 않는다.")
+
+
 def context(cfg: dict) -> Dict[str, str]:
     p, h = cfg["project"], cfg["harness_repo"]
     py = cfg["platform"]["python"]  # 안내 명령의 파이썬(mac · Linux python3, Windows py -3 등)
@@ -123,7 +158,7 @@ def context(cfg: dict) -> Dict[str, str]:
     rows = ["| 폴더 | 원격 | 기준 브랜치 | 그 브랜치에 들어가면 | 작업자 |", "| --- | --- | --- | --- | --- |",
             f"| `.` ({h['dir']}) | {h.get('remote') or '-'} | `{h['base_branch']}` | 배포 없음. 하네스 규칙과 실행 장치 | 오케스트레이터 |"]
     for r in cfg["repos"]:
-        rows.append(f"| `{hl.repo_ref(r)}` | {r.get('remote') or r.get('url') or '로컬만'} | `{r['base_branch']}` | {md_escape(deploy_text(r))} | `{r['key']}-worker` |")
+        rows.append(f"| `{hl.repo_ref(r, cfg)}` | {r.get('remote') or r.get('url') or '로컬만'} | `{r['base_branch']}` | {md_escape(deploy_text(r))} | `{r['key']}-worker` |")
     if not cfg["repos"]:
         rows.append("")
         rows.append(f"> **코드 저장소가 아직 없다.** 나중에 하네스 폴더에서 `{py} harness/scripts/bootstrap.py add-repo` 로 더한다"
@@ -149,6 +184,7 @@ def context(cfg: dict) -> Dict[str, str]:
         "cleanup_line": cleanup,
         "dispatch_table": dispatch_table(cfg), "harness_dir": h["dir"], "py": py,
         "engine_cmds": " 또는 ".join(f"`{e}`" for e in cfg["engines"]),
+        "worktree_example": worktree_example(cfg), "works_text": hl.works_text(cfg),
     }
     ctx.update(tracker_text(cfg, labels))
     ctx.update(workflow_text(cfg))
@@ -263,13 +299,20 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
     owner, slug = p["owner_title"], p["slug"]
     engines = " · ".join({"claude": "Claude", "codex": "Codex"}[e] for e in cfg["engines"])
     worker_rule = runners.worker_rule(cfg)
+    scope = f"\n> **역할 범위.** {role_scope(cfg)}\n" if role_scope(cfg) else ""
+    lay = hl.layout_of(cfg)
+    place_rows = ""
+    if hl.repos_inside(cfg):
+        place_rows += f"| `{lay['repos_dir']}/<저장소 폴더>/` | 작업 레포 원본(새로 만들기 · clone). 하네스 git 은 무시한다. 여기서 직접 고치지 않고 워크트리를 만든다 |\n"
+    if hl.works_inside(cfg):
+        place_rows += f"| `{lay['works_dir']}/<작업>/<저장소 폴더>/` | 작업별 워크트리. 작업자가 일하는 자리. 하네스 git 은 무시한다 |\n"
     body = f"""# {p['name']} 오케스트레이터
 
 > 셋업 · 점검: 「셋업해」라고 하면 `setup` 스킬(`plugins/{slug}/skills/setup/SKILL.md`)을 따른다. 설정 원본은 `harness.json` 하나다.
 
 이 저장소({h['dir']})는 {p['name']} **하네스**다. 여기서 뜬 에이전트({engines})는 **오케스트레이터**다.
 실행 엔진과 무관하게 같은 규칙과 작업 방식을 쓴다. 대화 기록 · 사용량 · 세션 정리는 실제로 실행한 엔진에만 속한다. 한 세션에서 다른 엔진을 추가로 띄워 이중 사용하지 않는다.
-
+{scope}
 ## 오케스트레이터가 하는 일 / 안 하는 일
 
 | 한다 | 안 한다 |
@@ -284,6 +327,8 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
 ## 저장소 지도
 
 {ctx['repo_table']}
+
+- {repo_guard(cfg)}
 
 ## 역할과 작업 공간 경계
 {worker_rule}- 하네스 자체 작업(규칙 · 훅 · 기록)도 하네스 저장소의 격리 워크트리 또는 현재 세션의 서브에이전트에서 한다.
@@ -302,7 +347,7 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
 | `docs/기록/` | 결정의 근거 원본. {ctx['record_from']} |
 {ctx['board_row']}
 | `README.md` | 설치한 사람용 안내 한 장. 「하고 싶은 것 → 이렇게 말한다」 |
-{runners.layout_rows(cfg)}
+{place_rows}{runners.layout_rows(cfg)}
 ## 일하는 순서
 
 1. 세션을 열면 {ctx['session_open']}.
@@ -330,6 +375,7 @@ def claude_md(cfg: dict, ctx: Dict[str, str]) -> str:
 
 def agents_md(cfg: dict) -> str:
     slug = cfg["project"]["slug"]
+    scope = f"5. {role_scope(cfg)}\n" if role_scope(cfg) else ""
     return f"""# {cfg['project']['name']} 에이전트 진입점
 
 > 셋업 · 점검: 「셋업해」라고 하면 `plugins/{slug}/skills/setup/SKILL.md` 를 읽고 따른다.
@@ -340,7 +386,7 @@ def agents_md(cfg: dict) -> str:
 2. 작업에 해당하는 `.claude/rules/` 파일이 있으면 함께 읽는다.
 3. 설치된 `{slug}` 플러그인의 관련 스킬을 쓴다. 플러그인이 없으면 작업 전에 설치 누락을 보고한다.
 4. 한 세션에서 다른 엔진을 추가로 실행해 이중으로 사용량을 쓰지 않는다.
-
+{scope}
 작업자 이름이 필요하면 `.codex/agents/` 정의를 쓴다.
 """
 
@@ -361,12 +407,16 @@ def core_md(cfg: dict, ctx: Dict[str, str]) -> str:
             "code-convention": "코드 수정 · 커밋 전", "security-privacy": "API · 권한 · 개인정보를 건드리기 전",
             "operations": "환경변수 · 배포 설정 · DB 변경 전 · 장애", "design": "화면 · 색 · 아이콘 · 이미지 작업 전"}
     table = "\n".join(f"| `{s}` | {when[s]} |" for s in skills)
+    scope = f"- {role_scope(cfg)}\n" if role_scope(cfg) else ""
     body = f"""# {p['name']} 핵심 규칙 ({slug} 플러그인이 세션마다 넣는 요약)
 요약이다. 전문은 플러그인 스킬(`{slug}:<이름>`)이 주인이고, 갈리면 스킬이 이긴다.
 
 ## 실행 엔진과 세션
 {engine}
 - 한 세션에서 두 엔진을 이중 실행하지 않는다. 대화 기록 · 사용량 · 세션 보관은 실행한 엔진별로 분리한다.
+
+## 역할 · 저장소
+{scope}- {repo_guard(cfg)}
 
 ## 거짓 금지 · 근거
 - 확인하지 않은 것을 됐다고 쓰지 않는다. 커밋 ≠ push ≠ 배포 ≠ 동작.
@@ -405,6 +455,14 @@ def worker_md(cfg: dict, r: dict) -> str:
     p, slug = cfg["project"], cfg["project"]["slug"]
     checks = " · ".join(f"`{c}`" for c in r["checks"]) or "저장소의 lint · 타입 검사 · 테스트 전체(명령은 harness.json 에 채운다)"
     desc = r.get("description") or r["dir"]
+    if hl.works_inside(cfg):
+        wt = f"{hl.works_text(cfg)}/<작업이름>/{r['dir']}"
+        start = (f"이미 격리 워크트리 안이면 그대로 쓴다. 브리프가 워크트리(`{wt}`)를 알려 줬으면 그 안에서만 일한다. "
+                 f"없으면 `git -C <저장소> fetch origin && git -C <저장소> worktree add \"{wt}\" -b <작업이름> origin/{r['base_branch']}` 로 만들고 그 안에서만 일한다. "
+                 f"저장소 원본(`{hl.repo_ref(r, cfg)}`)에서 직접 고치지 않는다.")
+    else:
+        start = (f"이미 격리 워크트리 안이면 그대로 쓴다. 아니면 `git -C <저장소> fetch origin && git -C <저장소> worktree add "
+                 f"<저장소 부모>/.work/{r['key']}-<과제-슬러그> -b <과제-슬러그> origin/{r['base_branch']}` 로 만들고 그 안에서만 일한다.")
     return f"""---
 name: {r['key']}-worker
 description: {p['name']} {r['dir']} 저장소({r.get('remote') or r.get('url') or '로컬'}, {md_escape(desc)}) 과제를 맡는 작업자. 오케스트레이터가 {r['dir']} 저장소 과제 하나를 줄 때 쓴다.
@@ -413,9 +471,9 @@ description: {p['name']} {r['dir']} 저장소({r.get('remote') or r.get('url') o
 너는 {p['name']} **{r['dir']} 저장소 작업자**다. 받은 과제 하나만 하고, 결론만 돌려준다.
 
 ## 자리
-- 저장소: 오케스트레이터에서 부르면 `{hl.repo_ref(r)}`, 그 저장소 세션에서 부르면 현재 저장소
+- 저장소: 오케스트레이터에서 부르면 `{hl.repo_ref(r, cfg)}`(하네스 폴더 기준), 그 저장소 세션에서 부르면 현재 저장소
 - 기준 브랜치: `origin/{r['base_branch']}` ({deploy_text(r)})
-- 시작: 이미 격리 워크트리 안이면 그대로 쓴다. 아니면 `git -C <저장소> fetch origin && git -C <저장소> worktree add <저장소 부모>/.work/{r['key']}-<과제-슬러그> -b <과제-슬러그> origin/{r['base_branch']}` 로 만들고 그 안에서만 일한다.
+- 시작: {start}
 
 ## 먼저 읽을 것
 - 작업 공간의 `CLAUDE.md` · `AGENTS.md` 와 `.claude/rules/` (있으면).
@@ -608,9 +666,13 @@ def plugin_config(cfg: dict) -> dict:
         rid = r.get("remote") or r["dir"]
         repos[rid] = {"ask": {b: (r.get("deploy") or {}).get(b, "") for b in r["ask_on_push"]}}
     protected = (cfg.get("rules") or {}).get("protected") or list(hl.DEFAULT_PROTECTED)
-    return {"project": cfg["project"]["name"], "owner_title": cfg["project"]["owner_title"],
-            "approve_env": "HARNESS_APPROVED_PUSH", "protected": protected, "repos": repos,
-            "orca_workspaces": cfg["orca"]["workspaces_dir"]}
+    out = {"project": cfg["project"]["name"], "owner_title": cfg["project"]["owner_title"],
+           "approve_env": "HARNESS_APPROVED_PUSH", "protected": protected, "repos": repos,
+           "orca_workspaces": cfg["orca"]["workspaces_dir"]}
+    if hl.works_inside(cfg):
+        # 워크트리 폴더 이름(경로가 아니다). Codex 세션 보관이 「작업자 워크트리 안인가」를 볼 때 쓴다. 옆 배치는 전과 같게 넣지 않는다
+        out["works_dir"] = works_short(cfg)
+    return out
 
 
 def hook_cmd(py: str, script: str) -> str:
@@ -649,7 +711,7 @@ def claude_settings(cfg: dict) -> dict:
     py, slug = cfg["platform"]["python"], cfg["project"]["slug"]
     cmd = lambda s: f'{py} "$CLAUDE_PROJECT_DIR/harness/hooks/{s}"'  # noqa: E731
     settings = {
-        "permissions": {"additionalDirectories": [hl.repo_ref(r) for r in cfg["repos"]]},
+        "permissions": {"additionalDirectories": [hl.repo_ref(r, cfg) for r in cfg["repos"]]},
         "hooks": {
             "PreToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
                             "hooks": [{"type": "command", "command": cmd("guard-rules.py")}]}],
@@ -755,8 +817,10 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
     managed("AGENTS.md", agents_md(cfg))
     if w.guard(".gitignore"):  # 블록만 생성기 몫. 블록 밖에 사람이 더한 줄은 update 가 덮지 않는다
         produced.append(".gitignore")
+        lay = hl.layout_of(cfg)  # 안쪽 배치: 작업 레포 · 워크트리 폴더를 하네스 git 이 보지 않게 한다
+        inner = "".join(f"{lay[k]}/\n" for k, on in (("repos_dir", hl.repos_inside(cfg)), ("works_dir", hl.works_inside(cfg))) if on)
         w.line_block(".gitignore", ".DS_Store\n__pycache__/\n*.pyc\n.claude/worktrees/\n.claude/settings.local.json\n.work/\n"
-                                   f"*.{hl.BACKUP_SUFFIX}-*\n" + hl.SECRET_IGNORE)
+                                   + inner + f"*.{hl.BACKUP_SUFFIX}-*\n" + hl.SECRET_IGNORE)
     managed(".gitattributes", "* text=auto eol=lf\n*.ps1 text eol=crlf\n*.cmd text eol=crlf\n")
 
     # 플러그인

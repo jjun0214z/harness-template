@@ -69,8 +69,8 @@ class Place:
         self.wf = self.cfg["workflow"]
         self.py = self.cfg["platform"]["python"]
         self.docs = self.root / self.wf["dir"]
-        self.parent = hl.git_common_parent(self.root) or self.root.parent
-        self.work = self.parent / ".work"
+        self.parent = hl.repos_root(self.cfg, self.root)  # 저장소가 놓이는 폴더(배치 설정)
+        self.work = hl.works_root(self.cfg, self.root)    # 작업별 워크트리 폴더(안쪽 .works · 옆 .work)
         self.base = self.cfg["harness_repo"]["base_branch"]
         self.repos = {r["key"]: r for r in self.cfg["repos"]}
 

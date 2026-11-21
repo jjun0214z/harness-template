@@ -15,7 +15,8 @@ description: Git · 커밋 · 브랜치 규칙(저장소별 기준 브랜치 · 
 <!-- harness:end git-rules-repos -->
 
 ## 3. 작업 공간
-- 과제마다 워크트리: `git -C <저장소> worktree add <프로젝트 폴더>/.work/<저장소>-<슬러그> -b <슬러그> origin/<기준>`.
+- 과제마다 워크트리: `git -C <저장소> worktree add {{worktree_example}} -b <슬러그> origin/<기준>`. 워크트리는 `{{works_text}}/` 한 곳에 모은다(`work.py new` · Orca 작업자도 같은 곳).
+- 저장소 원본(`CLAUDE.md` 「저장소 지도」의 폴더)에서 직접 고치지 않는다. 원본은 정리 스크립트도 지우지 않는다.
 - 공유 체크아웃에서 `git add -A` · `git commit -a` · `switch` 하지 않는다. add 는 경로를 명시한다.
 
 ## 4. 커밋 메시지

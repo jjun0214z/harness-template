@@ -110,7 +110,9 @@ class NoRepos(unittest.TestCase):
         answers = "\n".join(["app", "1", "3"]) + "\n"   # 기본 add-repo: 키 · 방식 · 스택만
         r = self.sb.bootstrap("add-repo", "--target", str(self.target), "--offline", "--skip-install", input_text=answers)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertTrue((self.sb.projects / "app" / ".git").exists())
+        # 대화로 새로 셋업한 하네스는 안쪽 배치다: 저장소는 하네스 안 .repos/ 에 생긴다
+        self.assertTrue((self.target / ".repos" / "app" / ".git").exists())
+        self.assertFalse((self.sb.projects / "app").exists())
 
 
 if __name__ == "__main__":

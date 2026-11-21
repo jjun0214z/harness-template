@@ -75,6 +75,12 @@ class ConfigError(ValueError):
 # ---------------------------------------------------------------- 설정
 
 DEFAULT_OWNER_TITLE = "주임님"  # 결정권자 호칭 기본값. 셋업에서 --title 로 바꾼다
+# 배치: 작업 레포 · 워크트리를 어디에 두나. 둘 다 하네스 폴더(본 체크아웃) 기준 상대 경로다.
+# 안쪽(새 설치 기본): <하네스>/.repos/<dir> · <하네스>/.works/<작업>/<dir>
+# 옆(layout 칸이 없던 옛 설정): <하네스>/../<dir> · <하네스>/../.work/…  폴더를 자동으로 옮기지 않는다.
+LAYOUT_INSIDE = {"repos_dir": ".repos", "works_dir": ".works"}
+LAYOUT_BESIDE = {"repos_dir": "..", "works_dir": "../.work"}
+LAYOUT_RESERVED = (".git", ".claude", ".claude-plugin", ".codex", ".agents", ".github")
 
 
 def default_config() -> dict:
@@ -87,6 +93,7 @@ def default_config() -> dict:
         "engines": ["claude"],
         "runner": runners.DEFAULT_RUNNER,
         "packs": [],
+        "layout": dict(LAYOUT_INSIDE),
         "workflow": {"prefix": "T", "dir": "docs/작업", "branch": "feature/{id}-{slug}"},
         "orca": {"workspaces_dir": "~/orca/workspaces"},
         "labels": list(DEFAULT_LABELS),
@@ -99,6 +106,8 @@ def normalize(raw: dict) -> dict:
     """빠진 칸을 기본값으로 채운 새 dict. 검증은 validate 가 한다."""
     cfg = default_config()
     raw = migrate_raw(raw)
+    if "layout" not in raw:  # 옛 설정: 지금 동작(옆 배치 · .work)을 그대로 둔다
+        cfg["layout"] = dict(LAYOUT_BESIDE)
     for key, value in raw.items():
         if isinstance(value, dict) and isinstance(cfg.get(key), dict):
             merged = dict(cfg[key])
@@ -216,6 +225,18 @@ def validate(cfg: dict) -> List[str]:
         errs.append("workflow.dir 은 하네스 안의 상대 경로다(예: docs/작업)")
     if "{id}" not in str(wf.get("branch", "")):
         errs.append("workflow.branch 에는 {id} 가 들어가야 한다(예: feature/{id}-{slug})")
+    lay = cfg.get("layout")
+    if not isinstance(lay, dict):
+        errs.append("layout 은 {repos_dir, works_dir} 다")
+    else:
+        for k, beside in (("repos_dir", LAYOUT_BESIDE["repos_dir"]), ("works_dir", LAYOUT_BESIDE["works_dir"])):
+            v = lay.get(k)
+            if v == beside:
+                continue
+            if not isinstance(v, str) or not safe_dir_name(v) or not v.startswith(".") or v in LAYOUT_RESERVED:
+                errs.append(f"layout.{k} 는 하네스 안의 점으로 시작하는 폴더 이름(예: {LAYOUT_INSIDE[k]}) 또는 옛 옆 배치 값 `{beside}` 다")
+        if lay.get("repos_dir") == lay.get("works_dir"):
+            errs.append("layout.repos_dir 와 layout.works_dir 는 달라야 한다")
     if cfg.get("runner") not in runners.RUNNERS:
         errs.append(f"runner 는 {' · '.join(runners.RUNNERS)} 중 하나다")
     return errs
@@ -279,15 +300,79 @@ def all_dirs(cfg: dict) -> List[str]:
 
 
 def repo_path(repo: dict, parent: Path) -> Path:
-    """저장소 폴더. 연결(local)이면 그 경로 그대로(프로젝트 루트 밖이어도 된다), 아니면 프로젝트 루트 아래."""
+    """저장소 폴더. 연결(local)이면 그 경로 그대로(어디에 있어도 된다), 아니면 parent 아래.
+    parent 는 `repos_root(cfg, 하네스 폴더)` 로 구한다(배치 설정을 따른다)."""
     if repo.get("source") == "local" and repo.get("path"):
         return Path(repo["path"])
     return Path(parent) / repo["dir"]
 
 
-def repo_ref(repo: dict) -> str:
-    """문서에 적는 자리: 연결이면 절대 경로, 아니면 하네스 옆 ../<폴더>."""
-    return repo["path"] if repo.get("source") == "local" and repo.get("path") else f"../{repo['dir']}"
+def layout_of(cfg: Optional[dict]) -> dict:
+    """배치 설정. cfg 가 없거나 layout 칸이 없으면 옛 옆 배치."""
+    lay = (cfg or {}).get("layout")
+    return dict(LAYOUT_BESIDE, **lay) if isinstance(lay, dict) else dict(LAYOUT_BESIDE)
+
+
+def repos_inside(cfg: Optional[dict]) -> bool:
+    return layout_of(cfg)["repos_dir"] != LAYOUT_BESIDE["repos_dir"]
+
+
+def works_inside(cfg: Optional[dict]) -> bool:
+    return layout_of(cfg)["works_dir"] != LAYOUT_BESIDE["works_dir"]
+
+
+def layout_label(cfg: Optional[dict]) -> str:
+    lay = layout_of(cfg)
+    repos = f"안쪽 `{lay['repos_dir']}/`" if repos_inside(cfg) else "옆 `../<폴더>`"
+    works = f"안쪽 `{lay['works_dir']}/`" if works_inside(cfg) else "옆 `../.work/`"
+    return f"저장소 {repos} · 워크트리 {works}"
+
+
+def harness_main(target: Path) -> Path:
+    """하네스 본 체크아웃. 하네스의 워크트리에서 돌려도 본 체크아웃을 가리킨다. git 이 아니면 target 그대로."""
+    return git_main_root(target) or Path(target)
+
+
+def _under(main: Path, rel: str) -> Path:
+    return Path(os.path.normpath(os.path.join(str(main), *rel.split("/"))))
+
+
+def repos_root(cfg: Optional[dict], target: Path) -> Path:
+    """새로 만들기 · clone 저장소가 놓이는 폴더. 안쪽이면 <하네스>/.repos, 옆이면 하네스의 부모."""
+    return _under(harness_main(target), layout_of(cfg)["repos_dir"])
+
+
+def works_root(cfg: Optional[dict], target: Path) -> Path:
+    """작업별 워크트리가 놓이는 폴더. 안쪽이면 <하네스>/.works, 옆이면 <하네스 부모>/.work."""
+    return _under(harness_main(target), layout_of(cfg)["works_dir"])
+
+
+def old_work_dir(cfg: Optional[dict], target: Path) -> Optional[Path]:
+    """안쪽 배치로 옮긴 뒤에도 남아 있을 수 있는 옛 워크트리 폴더(<하네스 부모>/.work). 옆 배치면 None."""
+    return _under(harness_main(target), LAYOUT_BESIDE["works_dir"]) if works_inside(cfg) else None
+
+
+def work_roots(cfg: Optional[dict], target: Path) -> List[str]:
+    """정리 스크립트가 아는 작업 공간 뿌리: 지금 워크트리 폴더 + (안쪽 배치면) 옛 .work. 저장소 폴더(.repos)는 넣지 않는다."""
+    old = old_work_dir(cfg, target)
+    return [str(works_root(cfg, target))] + ([str(old)] if old else [])
+
+
+def repo_ref(repo: dict, cfg: Optional[dict] = None) -> str:
+    """문서에 적는 자리(하네스 폴더 기준): 연결이면 절대 경로, 안쪽 배치면 .repos/<폴더>, 옆 배치면 ../<폴더>."""
+    if repo.get("source") == "local" and repo.get("path"):
+        return repo["path"]
+    return f"{layout_of(cfg)['repos_dir']}/{repo['dir']}"
+
+
+def harness_ref_from_repo(cfg: dict) -> str:
+    """코드 저장소에서 본 하네스 자리(그 저장소 CLAUDE.md 에 적는다)."""
+    return "../.." if repos_inside(cfg) else f"../{cfg['harness_repo']['dir']}"
+
+
+def works_text(cfg: Optional[dict]) -> str:
+    """문서에 적는 워크트리 폴더."""
+    return f"<하네스 폴더>/{layout_of(cfg)['works_dir']}" if works_inside(cfg) else "<프로젝트 폴더>/.work"
 
 
 def _git_out(path: Path, *args) -> str:
@@ -749,6 +834,12 @@ class Writer:
 
 def git_common_parent(start: Path) -> Optional[Path]:
     """start 가 속한 저장소의 본 체크아웃 부모 폴더. 워크트리에서 돌려도 공유 체크아웃 옆을 가리킨다."""
+    main = git_main_root(start)
+    return main.parent if main else None
+
+
+def git_main_root(start: Path) -> Optional[Path]:
+    """start 가 속한 저장소의 본 체크아웃 폴더. 워크트리에서 돌려도 본 체크아웃을 가리킨다."""
     try:
         r = subprocess.run(["git", "-C", str(start), "rev-parse", "--path-format=absolute", "--git-common-dir"],
                            capture_output=True, text=True, timeout=10)
@@ -758,8 +849,7 @@ def git_common_parent(start: Path) -> Optional[Path]:
     if r.returncode != 0 or not out:
         return None
     common = Path(out)
-    main = common.parent if common.name == ".git" else common
-    return main.parent
+    return common.parent if common.name == ".git" else common
 
 
 def refresh_windows_path(env: Optional[Dict[str, str]] = None, winreg_mod=None) -> str:

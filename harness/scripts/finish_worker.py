@@ -429,7 +429,8 @@ def check(worktree: Path, dispatch: Optional[str], orca: Optional[str], cfg: Opt
         if not orca:
             raise Stop("--dispatch 를 줬는데 orca CLI 를 못 찾는다")
         ws = real(os.path.expanduser((cfg or {}).get("orca", {}).get("workspaces_dir", "~/orca/workspaces")))
-        if not inside(wt, ws):
+        works = [real(p) for p in hl.work_roots(cfg, HARNESS_ROOT)] if cfg and hl.works_inside(cfg) else []
+        if not inside(wt, ws) and not any(inside(wt, w) for w in works):
             raise Stop(f"Orca 작업 폴더({ws}) 밖이다: {wt}")
         r = subprocess.run([orca, "orchestration", "worker-show", "--dispatch", dispatch, "--json"], capture_output=True, text=True)
         try:
@@ -519,11 +520,15 @@ def delete_branch(repo: str, branch: str) -> None:
 
 
 class CleanupLock:
-    """동시 정리를 막는 잠금 파일: <프로젝트 폴더>/.work/cleanup.lock (pid · 시작 시각). 주인이 죽은 잠금은 넘겨받는다."""
+    """동시 정리를 막는 잠금 파일: <워크트리 폴더>/cleanup.lock (pid · 시작 시각). 주인이 죽은 잠금은 넘겨받는다.
+    워크트리 폴더는 배치 설정을 따른다(안쪽 <하네스>/.works · 옆 <프로젝트 폴더>/.work)."""
 
     def __init__(self):
-        parent = hl.git_common_parent(HARNESS_ROOT) or HARNESS_ROOT.parent
-        self.path = Path(os.environ.get("HARNESS_CLEANUP_LOCK") or (parent / ".work" / "cleanup.lock"))
+        try:
+            cfg = hl.load_config(HARNESS_ROOT / hl.CONFIG_NAME)
+        except hl.ConfigError:
+            cfg = None
+        self.path = Path(os.environ.get("HARNESS_CLEANUP_LOCK") or (hl.works_root(cfg, HARNESS_ROOT) / "cleanup.lock"))
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -639,7 +644,7 @@ def all_worktrees(cfg: Optional[dict]) -> Optional[List[str]]:
     """하네스 · 설정 저장소 전부의 지금 있는 워크트리 경로. 설정이 없거나 하나라도 못 읽으면 None."""
     if not cfg:
         return None
-    parent = hl.git_common_parent(HARNESS_ROOT) or HARNESS_ROOT.parent
+    parent = hl.repos_root(cfg, HARNESS_ROOT)
     paths: List[str] = []
     for repo in [HARNESS_ROOT] + [hl.repo_path(r, parent) for r in cfg["repos"]]:
         r = git(repo, "worktree", "list", "--porcelain")
@@ -662,9 +667,8 @@ def sweep_temp(wt: str, cfg: Optional[dict], apply: bool, finished: List[str]) -
     except Exception as exc:
         print(f"경고: Claude 임시 폴더를 보지 못했다({type(exc).__name__}: {exc})", file=sys.stderr)
     roots = [os.path.realpath(os.path.expanduser(cfg["orca"]["workspaces_dir"]))] if cfg else []
-    parent = hl.git_common_parent(HARNESS_ROOT)
-    if parent:
-        roots.append(str(parent / ".work"))
+    if hl.git_main_root(HARNESS_ROOT):
+        roots += hl.work_roots(cfg, HARNESS_ROOT)
     try:
         failed = ct.sweep(apply, finished, roots, all_worktrees(cfg))
     except Exception as exc:  # 찌꺼기 정리가 실패해도 작업자 정리 결과는 바꾸지 않는다

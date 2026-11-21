@@ -111,6 +111,7 @@ def cmd_run(args) -> int:
         return 2
     rep = Report()
     say(f"하네스 폴더: {target}  (프로젝트 루트: {target.parent} · 템플릿 원본: {TEMPLATE_ROOT})")
+    say(f"배치: {hl.layout_label(cfg)}")
     tools_step(cfg, kind, rep, yes=args.yes, interactive=not args.non_interactive)
     created = local_init or (cfg["harness_repo"].get("source") != "local" and (
         not (target / ".git").exists() or (not has_commit(target) and not (target / hl.CONFIG_NAME).is_file())))
@@ -124,7 +125,7 @@ def cmd_run(args) -> int:
     if not cpath.is_file() or cpath.read_text(encoding="utf-8") != text:
         with open(cpath, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
-    parent = hl.git_common_parent(target) or target.parent
+    parent = hl.repos_root(cfg, target)  # 저장소가 놓이는 폴더(배치 설정: 안쪽 .repos · 옆)
     new_repos = repos_step(cfg, parent, rep, args.offline, created_record(target))
     pending = not created and harness_created(target) and not has_commit(target)
     w = gen.generate(cfg, target, created_repos=new_repos, created_harness=created)
@@ -226,7 +227,7 @@ def cmd_add_repo(args) -> int:
         with open(cpath, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
     rep = Report()
-    parent = hl.git_common_parent(target) or target.parent
+    parent = hl.repos_root(cfg, target)
     new_repos = repos_step(sub, parent, rep, args.offline, created_record(target))
     w = gen.generate(cfg, target, created_repos=new_repos)
     rep.add("생성", "통과", f"바뀐 파일 {len(w.changed)} · 사람이 채운 파일 유지 {len(w.kept)}")
