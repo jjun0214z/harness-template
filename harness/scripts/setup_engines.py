@@ -122,12 +122,13 @@ def orca_step(cfg: dict, target: Path, parent: Path, kind: str, rep: Report) -> 
             rep.todo(f"Orca 를 한 번 열고 {hl.boot_cmd('run', kind)} 를 다시 돌린다(저장소 등록)")
             return
     try:
-        known = {os.path.realpath(r.get("path", "")) for r in (json.loads(out).get("result") or {}).get("repos") or []}
-    except ValueError:
-        known = set()
+        registered = [r for r in (json.loads(out).get("result") or {}).get("repos") or [] if isinstance(r, dict)]
+    except (ValueError, AttributeError):
+        registered = []
+    known = {os.path.realpath(r.get("path", "")) for r in registered}
     rows = [(cfg["harness_repo"]["dir"], target, cfg["harness_repo"]["base_branch"])]
     rows += [(r["dir"], hl.repo_path(r, parent), r["base_branch"]) for r in cfg["repos"]]
-    bad, added = [], 0
+    bad, added, hidden = [], 0, []
     for name, path, base in rows:
         if not path.is_dir():
             continue
@@ -138,5 +139,22 @@ def orca_step(cfg: dict, target: Path, parent: Path, kind: str, rep: Report) -> 
             added += 1
         if run([orca, "repo", "set-base-ref", "--repo", f"path:{path}", "--ref", f"origin/{base}", "--json"], timeout=60)[0] != 0:
             bad.append(name)
+        elif hl.works_inside(cfg):
+            # 워크트리를 하네스가 만든다(<하네스>/.works): Orca 가 만들지 않은 워크트리도 그 저장소에서 보이게 한다. 실패해도 등록은 된 것이다
+            if run([orca, "repo", "set", "--repo", f"path:{path}", "--external-worktree-visibility", "show", "--json"], timeout=60)[0] != 0:
+                hidden.append(name)
     rep.add("Orca 등록", "실패" if bad else "통과",
             f"실패: {', '.join(bad)}" if bad else f"새로 등록 {added} · 이미 등록된 것은 건너뜀 · 기준 브랜치")
+    if hidden:
+        rep.todo(f"Orca 에서 {', '.join(hidden)} 의 「Orca 밖 워크트리 보이기」를 켜지 못했다(옛 Orca 일 수 있다). "
+                 "작업자 워크트리가 Orca 에 안 보이면 저장소 설정에서 켠다")
+    # Orca 는 저장소를 폴더 이름으로 보여 준다(CLI 로 표시 이름을 줄 수 없다). 다른 프로젝트에 같은 이름이 있으면 화면에서 한 묶음으로 섞인다
+    ours = {os.path.realpath(str(p)) for _, p, _ in rows}
+    names = {r.get("displayName") or os.path.basename(str(r.get("path", "")).rstrip("/\\"))
+             for r in registered if os.path.realpath(r.get("path", "")) not in ours}
+    clash = sorted({path.name for _, path, _ in rows if path.is_dir() and path.name in names})
+    if clash:
+        rep.add("Orca 이름 겹침", "안내", f"다른 프로젝트에 같은 이름의 저장소가 이미 등록돼 있다: {', '.join(clash)}")
+        rep.todo(f"Orca 화면(특히 모바일)은 저장소를 이름으로 묶는다: {', '.join(clash)} 가 다른 프로젝트 것과 한 묶음으로 보인다. "
+                 "이 하네스의 스크립트는 경로로 고르므로 작업자가 엉뚱한 저장소에 뜨지는 않는다. "
+                 "CLI 로는 표시 이름을 줄 수 없다: 화면에서 구분하려면 폴더 이름(harness.json 의 dir)을 프로젝트별로 다르게 짓는다")

@@ -30,4 +30,16 @@ else:
     sys.exit(1)
 PYEOF
 }
+# 배치(harness.json layout) 세 줄: 저장소가 놓이는 폴더 / 워크트리 폴더 / inside(하네스 안 .works) 또는 beside(옛 옆 배치)
+place_info() {
+  "$PY" - "$HARNESS_ROOT" <<'PYEOF'
+import sys
+sys.path.insert(0, sys.argv[1] + "/harness/scripts")
+import harnesslib as hl
+cfg = hl.load_config(sys.argv[1] + "/harness.json")
+print(hl.repos_root(cfg, sys.argv[1]))
+print(hl.works_root(cfg, sys.argv[1]))
+print("inside" if hl.works_inside(cfg) else "beside")
+PYEOF
+}
 j() { "$PY" -c "import json,sys; d=json.load(sys.stdin); r=d.get('result') or d.get('error') or {}; print($1)"; }
