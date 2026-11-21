@@ -10,6 +10,8 @@
 
 격리 워크트리 판정(세션 root 가 아니라 쓰는 대상 파일 기준):
 1. 대상 경로가 `<하네스>/.claude/worktrees/` 또는 `<프로젝트 폴더>/.work/` 아래다.
+   안쪽 배치(harness.json layout)면 `<하네스>/.repos/` · `<하네스>/.works/` 아래도 같다: 작업 레포와 그 워크트리이지
+   하네스 규칙 파일이 아니다(그 안의 `CLAUDE.md` · `.claude/` 는 그 저장소 것이다).
 2. 대상이 속한 git 작업 트리가 링크된 워크트리다(`git rev-parse --git-dir` != `--git-common-dir`).
 Bash 는 핵심 경로가 쓰기 대상일 때만 묻는다. 명령은 shellwords 로 읽는다(`cd X &&` · `sh -c` · `$(…)` · heredoc).
 위치를 알 수 없는 쓰기(`cd $X && …`)나 따옴표가 깨진 명령은 핵심 경로를 언급하면 묻는다. 완벽한 판정은 아니다.
@@ -38,10 +40,13 @@ def load_settings():
     rules = cfg.get("rules") or {}
     protected = tuple(rules.get("protected") or DEFAULT_PROTECTED)
     owner = (cfg.get("project") or {}).get("owner_title") or "결정권자"
-    return protected, owner
+    lay = cfg.get("layout") if isinstance(cfg.get("layout"), dict) else {}
+    # 안쪽 배치의 작업 레포 · 워크트리 폴더 이름(예: .repos · .works). 그 안은 하네스 규칙 파일이 아니다
+    inner = tuple(v for v in (lay.get("repos_dir"), lay.get("works_dir")) if isinstance(v, str) and v and not v.startswith(".."))
+    return protected, owner, inner
 
 
-PROTECTED, OWNER = load_settings()
+PROTECTED, OWNER, INNER_DIRS = load_settings()
 # 쓰기 명령: 인자 중 핵심 경로가 있으면 묻는다. 읽기 명령(ls · cat · grep · find · git log 등)은 묻지 않는다.
 WRITE_CMDS = {"tee", "mv", "cp", "rm", "truncate", "ln", "touch", "mkdir", "rmdir", "install", "rsync", "patch"}
 INLINE_CMDS = {"python", "python3", "perl", "node", "ruby"}  # 한 줄 코드가 핵심 경로를 다루면 묻는다
@@ -116,7 +121,7 @@ class Judge:
         self.isolated_prefixes = (
             os.path.join(main, ".claude", "worktrees") + os.sep,
             os.path.join(os.path.dirname(main), ".work") + os.sep,
-        )
+        ) + tuple(os.path.join(main, d) + os.sep for d in INNER_DIRS)
 
     @staticmethod
     def resolve(base, path):

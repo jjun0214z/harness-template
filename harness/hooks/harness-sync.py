@@ -6,6 +6,7 @@ SessionStart: 원격에서 fast-forward 로만 받아온다. 다른 기기에서
   받은 커밋이 규칙(harness.json rules.protected)을 건드렸으면 **바뀐 파일 이름을 대고** 알린다.
   「문서가 바뀌었을 수 있다」로 뭉뚱그리면 세션이 옛 절차를 그대로 쓴다.
   workflow 묶음을 켰으면 열린 작업과 누구 차례를 한 줄로 알린다(work.py --brief, 원격이 없어도).
+  등록된 저장소가 0개면 「저장소 추가가 먼저다 · 오케스트레이터가 직접 만들지 않는다」를 한 줄로 알린다.
 Stop: 공유 체크아웃에 커밋 안 된 변경이나 push 안 된 커밋이 남아 있으면 막고 커밋·push 를 요구한다.
   격리 워크트리(작업자 자리)는 push 하지 않는 것이 규칙이라 커밋 안 된 변경만 막는다.
   **같은 세션에서 같은 상태로는 한 번만 막는다.** Stop 은 턴마다 돌아서, 매번 막으면 읽히지 않고 넘겨진다.
@@ -65,8 +66,37 @@ def session_start(root):
             _, after, _ = git(root, "rev-parse", "HEAD")
             if before and after and before != after:
                 print(received_line(root, before, after))
+    repos_line(root)
     work_line(root)
     sys.exit(0)
+
+
+def inner_dirs(root):
+    """안쪽 배치의 작업 레포 · 워크트리 폴더 이름(예: .repos · .works). 옆 배치 · 옛 설정이면 빈 목록."""
+    try:
+        with open(os.path.join(root, "harness.json"), encoding="utf-8") as f:
+            lay = json.load(f).get("layout") or {}
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [v for v in (lay.get("repos_dir"), lay.get("works_dir")) if isinstance(v, str) and v and not v.startswith("..")]
+
+
+def repos_line(root):
+    """등록된 저장소가 0개면 한 줄로 알린다: 오케스트레이터가 작업자 · 검토원 없이 혼자 만들기 시작하지 않게 한다.
+    하네스 루트(본 체크아웃 · 하네스 워크트리)에서 연 세션에만 낸다."""
+    try:
+        with open(os.path.join(root, "harness.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return
+    if not isinstance(cfg, dict) or cfg.get("repos"):
+        return
+    py = (cfg.get("platform") or {}).get("python") or "python3"
+    packs = cfg.get("packs")
+    how = (f"작업은 `{py} harness/scripts/work.py new` 로 열고 작업자 → 검토원(`reviewer`)을 거친다"
+           if isinstance(packs, list) and "workflow" in packs else "작업은 작업자에게 맡기고 검토원(`reviewer`)을 거친다")
+    print("[저장소] 등록된 저장소 0개: 오케스트레이터는 만드는 일을 직접 하지 않는다. "
+          f"먼저 저장소 추가를 안내한다(`{py} harness/scripts/bootstrap.py add-repo`). {how}.")
 
 
 def work_line(root):
@@ -112,7 +142,10 @@ def stop(root, data):
         sys.exit(0)
     # 추적 안 된 폴더를 파일 단위로 펼쳐야 __pycache__ 만 든 폴더를 거를 수 있다
     _, dirty, _ = git(root, "status", "--porcelain", "--untracked-files=all")
-    dirty = "\n".join(l for l in dirty.splitlines() if not is_bytecode_cache(l))
+    # 안쪽 배치의 작업 레포 · 워크트리 폴더는 하네스 변경이 아니다(.gitignore 블록이 낡은 하네스에서도 막지 않게 거른다)
+    inner = tuple(d.rstrip("/") + "/" for d in inner_dirs(root))
+    dirty = "\n".join(l for l in dirty.splitlines() if not is_bytecode_cache(l)
+                      and not (inner and l.split(None, 1)[-1].strip('"').startswith(inner)))
     ahead = ""
     up = upstream(root)
     if up and not linked_worktree(root):
