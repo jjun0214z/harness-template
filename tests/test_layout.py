@@ -4,16 +4,20 @@
 - 옛 설정(layout 없음): 옆 배치 · `.work` 가 그대로다
 - 저장소 0개 가드: 세션 시작 줄 · CLAUDE.md · core.md
 - 지침 겹침: 역할 범위 문장 · 규칙 보호 훅이 `.repos/` · `.works/` 안을 막지 않는다
-- Orca: 저장소를 이름이 아니라 경로로 고른다
+- Orca: 저장소를 이름이 아니라 경로로 고른다 · `harness` 키는 배치와 무관하게 하네스 본 체크아웃 · 워크트리는 work.py 한 길
+- 훅은 layout 값이 검증 조건에 안 맞으면 보호를 풀지 않는다
 """
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 from helpers import SCRIPTS, TEMPLATE, Sandbox
 
@@ -336,8 +340,68 @@ class Config(unittest.TestCase):
     def test_bad_values(self):
         for layout in ({"repos_dir": "/abs", "works_dir": ".works"}, {"repos_dir": "repos", "works_dir": ".works"},
                        {"repos_dir": ".repos", "works_dir": "../elsewhere"}, {"repos_dir": ".git", "works_dir": ".works"},
-                       {"repos_dir": ".same", "works_dir": ".same"}, {"repos_dir": ".repos/x", "works_dir": ".works"}):
+                       {"repos_dir": ".same", "works_dir": ".same"}, {"repos_dir": ".repos/x", "works_dir": ".works"},
+                       # 예약 이름은 대소문자를 가리지 않는다 · 옛 워크트리 폴더 이름 · 관리 파일 이름
+                       {"repos_dir": ".GIT", "works_dir": ".works"}, {"repos_dir": ".repos", "works_dir": ".Claude"},
+                       {"repos_dir": ".repos", "works_dir": ".work"}, {"repos_dir": ".harness-manifest.json", "works_dir": ".works"},
+                       {"repos_dir": ".gitignore", "works_dir": ".works"},
+                       # 대소문자만 다른 두 값은 같은 폴더다
+                       {"repos_dir": ".repos", "works_dir": ".Repos"},
+                       # 한쪽 키만 · 모르는 키
+                       {"repos_dir": ".repos"}, {"works_dir": ".works"},
+                       {"repos_dir": ".repos", "works_dir": ".works", "extra": "x"}):
             self.assertTrue(any("layout" in e for e in hl.validate(self.cfg(**layout))), layout)
+
+    def test_empty_or_partial_layout_is_an_error_not_a_silent_default(self):
+        """`"layout": {}` 를 기본값으로 조용히 채우면 파일을 직접 읽는 훅과 생성기가 어긋난다."""
+        for layout in ({}, [], "inside", None):
+            raw = base_config()
+            raw["layout"] = layout
+            cfg = hl.normalize(raw)
+            self.assertTrue(any("layout" in e for e in hl.validate(cfg)), layout)
+            # 검증을 안 거친 채 써도 하네스 안의 엉뚱한 자리를 가리키지 않는다(옛 옆 배치로 본다)
+            self.assertEqual(hl.layout_of(cfg), hl.LAYOUT_BESIDE)
+        self.assertEqual(hl.layout_of({"layout": {"repos_dir": "harness", "works_dir": ".works"}})["repos_dir"], "..")
+
+
+class HookLayoutValues(Case):
+    """훅은 harness.json 을 직접 읽는다: layout 값이 검증 조건에 안 맞으면 보호를 풀지 않는다."""
+
+    def set_layout(self, layout):
+        raw = json.loads(self.read("harness.json"))
+        raw["layout"] = layout
+        (self.target / "harness.json").write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def decision(self, rel):
+        r = self.hook("guard-rules.py", {"tool_name": "Edit", "cwd": str(self.target),
+                                         "tool_input": {"file_path": str(self.target / rel)}})
+        return json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"] if r.stdout.strip() else None
+
+    def test_bad_layout_does_not_open_rule_files(self):
+        rules = ("harness/hooks/guard-rules.py", ".claude/settings.json", "plugins/lay/core.md", "CLAUDE.md")
+        for layout in ({"repos_dir": "harness", "works_dir": ".works"}, {"repos_dir": ".claude", "works_dir": ".works"},
+                       {"repos_dir": "plugins/lay", "works_dir": ".works"}, {"repos_dir": ".repos", "works_dir": "plugins"},
+                       {"repos_dir": ".Claude", "works_dir": ".works"}, {"repos_dir": ".repos", "works_dir": ".Repos"},
+                       {"repos_dir": ".repos"}, {}, "inside"):
+            self.set_layout(layout)
+            for rel in rules:
+                self.assertEqual(self.decision(rel), "ask", (layout, rel))
+            # 값이 틀리면 .repos 안도 풀어 주지 않는다(git 저장소가 아닌 폴더의 CLAUDE.md 는 하네스 기준으로 판정된다)
+        # 올바른 값이면 그 폴더 안만 풀리고 하네스 규칙 파일은 그대로 묻는다
+        self.set_layout(INSIDE)
+        self.assertIsNone(self.decision(".repos/stray/harness/x.py"))
+        self.assertIsNone(self.decision(".works/T-1/web/.claude/settings.json"))
+        for rel in rules:
+            self.assertEqual(self.decision(rel), "ask", rel)
+
+    def test_stop_hook_does_not_hide_changes_for_bad_layout(self):
+        self.git(self.target, "add", "-A")
+        self.git(self.target, "commit", "-q", "-m", "셋업")
+        self.set_layout({"repos_dir": "docs", "works_dir": ".works"})
+        (self.target / "docs" / "새-기록.md").write_text("x", encoding="utf-8")
+        r = self.hook("harness-sync.py", {"hook_event_name": "Stop", "cwd": str(self.target), "session_id": "s"})
+        self.assertEqual(json.loads(r.stdout)["decision"], "block")
+        self.assertIn("docs/", r.stdout)
 
 
 class CodexBinding(unittest.TestCase):
@@ -359,6 +423,182 @@ class CodexBinding(unittest.TestCase):
         self.assertEqual(mod.resolve_project(h + "/.repos/web", projects, home, none), "W")
         self.assertEqual(mod.resolve_project(h + "/.repos/web/src", projects, home, web_git), "W")
         self.assertEqual(mod.resolve_project(h + "/.works/T-0001-x/web", projects, home, web_git), "W")
+
+
+FAKE_ORCA = '''#!{python}
+import json, os, sys
+with open(os.environ["FAKE_ORCA_LOG"], "a", encoding="utf-8") as f:
+    f.write(json.dumps(sys.argv[1:], ensure_ascii=False) + "\\n")
+a = sys.argv[1:]
+out = {{}}
+if a[:2] == ["terminal", "create"]:
+    out = {{"terminal": {{"handle": "c1"}}}}
+elif a[:2] == ["orchestration", "run-create"]:
+    out = {{"runId": "r1"}}
+elif a[:2] == ["orchestration", "worker-start"] and not os.environ.get("FAKE_START_FAIL"):
+    out = {{"taskId": "t1", "dispatchId": "d1"}}
+elif a[:2] == ["orchestration", "dispatch-show"]:
+    out = {{"dispatch": {{"assignee_handle": "w1"}}}}
+print(json.dumps({{"result": out}}))
+'''
+
+
+class OrcaWorker(Case):
+    """scripts/orca-worker.sh: 워크트리 자리 · 브랜치는 work.py worktree 한 곳이 정한다. 하네스 자신(키 harness)은 배치와 무관하다."""
+
+    def setUp(self):
+        if not shutil.which("bash"):
+            self.skipTest("bash 가 없다")
+        super().setUp()
+        raw = json.loads(self.read("harness.json"))
+        raw["runner"] = "orca"
+        (self.target / "harness.json").write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.assertEqual(self.sb.bootstrap("generate", "--target", str(self.target)).returncode, 0)
+        self.add_web()
+        self.orca = self.sb.bin / "fake-orca"
+        self.orca.write_text(FAKE_ORCA.format(python=sys.executable), encoding="utf-8")
+        self.orca.chmod(0o755)
+        self.orca_log = self.sb.tmp / "orca.log"
+
+    def worker(self, repo, name, **env):
+        self.orca_log.write_text("", encoding="utf-8")
+        return subprocess.run(["bash", str(self.target / "scripts" / "orca-worker.sh"), repo, name, "과제 글"],
+                              capture_output=True, text=True, encoding="utf-8", timeout=120,
+                              env=self.sb.env(ORCA_BIN=str(self.orca), FAKE_ORCA_LOG=str(self.orca_log),
+                                              HARNESS_PYTHON=sys.executable, **env))
+
+    def start_args(self):
+        for line in self.orca_log.read_text(encoding="utf-8").splitlines():
+            args = json.loads(line)
+            if args[:2] == ["orchestration", "worker-start"]:
+                return args
+        return None
+
+    def opt(self, name):
+        args = self.start_args()
+        return args[args.index(name) + 1] if args and name in args else None
+
+    def test_harness_key_is_the_harness_checkout(self):
+        """안쪽 배치에서 `harness` 를 <하네스>/.repos/<하네스 폴더> 에서 찾아 멈추던 것."""
+        r = self.worker("harness", "하네스-일")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        wt = self.target / ".works" / "하네스-일" / "orchestrator"
+        self.assertEqual(self.opt("--worktree"), f"path:{wt.resolve()}")
+        self.assertEqual(self.git(wt, "symbolic-ref", "--short", "HEAD"), "하네스-일")
+        self.assertEqual(Path(self.git(wt, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve(),
+                         (self.target / ".git").resolve())
+        self.assertFalse((self.target / ".repos" / "orchestrator").exists())
+        # 폴더 이름으로 불러도 같다
+        r = self.worker("orchestrator", "하네스-일")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.opt("--worktree"), f"path:{wt.resolve()}")
+
+    def test_task_number_uses_the_task_folder_and_branch(self):
+        self.assertEqual(self.script("work.py", "new", "로그인", "web").returncode, 0)
+        r = self.worker("web", "T-0001")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        wt = self.target / ".works" / "T-0001-로그인" / "web"
+        self.assertEqual(self.opt("--worktree"), f"path:{wt.resolve()}")
+        self.assertIsNone(self.opt("--repo"))            # 있는 워크트리에는 만들 때 쓰는 옵션을 주지 않는다
+        self.assertIsNone(self.opt("--base-branch"))
+        # 그 작업의 대상이 아니던 저장소: 워크트리를 그 작업의 브랜치로 만들고 문서에도 더한다(work.py add 와 같은 길)
+        self.assertEqual(self.script("work.py", "new", "빈 작업").returncode, 0)
+        r = self.worker("web", "T-0002")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        wt2 = self.target / ".works" / "T-0002-빈-작업" / "web"
+        self.assertEqual(self.opt("--worktree"), f"path:{wt2.resolve()}")
+        self.assertEqual(self.git(wt2, "symbolic-ref", "--short", "HEAD"), "feature/T-0002-빈-작업")
+        self.assertIn("- 대상 저장소: web", self.read("docs/작업/T-0002-빈-작업.md"))
+        self.assertIn("| T-0002 | 빈 작업 | 열림 | 시작 전 | web 열림 |", self.script("work.py").stdout)
+
+    def test_new_name_makes_worktree_and_start_failure_says_what_is_left(self):
+        r = self.worker("web", "quick-fix", FAKE_START_FAIL="1")
+        self.assertEqual(r.returncode, 1)
+        wt = self.target / ".works" / "quick-fix" / "web"
+        self.assertTrue(wt.is_dir())
+        out = r.stdout + r.stderr
+        self.assertIn("작업자 시작 실패", out)
+        self.assertIn(f"워크트리는 남아 있다: {wt.resolve()} (브랜치 quick-fix)", out)
+        self.assertIn("다시 돌리면 이 워크트리를 그대로 쓴다", out)
+        r = self.worker("web", "quick-fix")   # 다시 돌리면 재사용
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.opt("--worktree"), f"path:{wt.resolve()}")
+
+    def test_worktree_failure_shows_reason_and_leaves_nothing(self):
+        # develop 은 저장소 원본이 이미 쓰는 브랜치라 git 이 거절한다
+        r = self.worker("web", "develop")
+        self.assertEqual(r.returncode, 1)
+        out = r.stdout + r.stderr
+        self.assertIn("워크트리를 만들지 못했다", out)
+        self.assertRegex(out, r"already (checked out|used by worktree)")   # git 이 말한 이유 그대로
+        self.assertFalse((self.target / ".works" / "develop").exists(), "빈 작업 폴더를 남겼다")
+        self.assertIsNone(self.start_args(), "워크트리 없이 작업자를 띄웠다")
+
+    def test_ambiguous_work_folder_stops(self):
+        for n in ("x-1", "x-2"):
+            (self.target / ".works" / n).mkdir(parents=True)
+        r = self.worker("web", "x")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("맞는 작업 폴더가 여러 개다(x-1, x-2)", r.stdout + r.stderr)
+        self.assertFalse((self.target / ".works" / "x").exists())
+        self.assertIsNone(self.start_args())
+
+
+class OrcaWorkerBeside(OrcaWorker):
+    """옛 옆 배치: Orca 가 워크트리를 만든다. `harness` 는 여기서도 하네스 본 체크아웃이다."""
+    layout = None
+
+    def test_harness_key_is_the_harness_checkout(self):
+        r = self.worker("harness", "하네스-일")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.opt("--worktree"), "new-top-level")
+        self.assertEqual(self.opt("--repo"), f"path:{self.target.resolve()}")
+        self.assertEqual(self.opt("--base-branch"), "main")
+
+    def test_task_number_uses_the_task_folder_and_branch(self):
+        r = self.worker("web", "일감")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.opt("--repo"), f"path:{(self.sb.projects / 'web').resolve()}")
+        self.assertEqual(self.opt("--name"), "일감")
+        self.assertFalse((self.target / ".works").exists())
+
+    def test_new_name_makes_worktree_and_start_failure_says_what_is_left(self):
+        r = self.worker("web", "quick-fix", FAKE_START_FAIL="1")   # Orca 가 만드는 방식: 하네스가 남긴 워크트리가 없다
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("워크트리는 남아 있다", r.stdout + r.stderr)
+
+    def test_worktree_failure_shows_reason_and_leaves_nothing(self):
+        self.skipTest("옆 배치는 하네스가 워크트리를 만들지 않는다")
+
+    def test_ambiguous_work_folder_stops(self):
+        self.skipTest("옆 배치는 하네스가 워크트리를 만들지 않는다")
+
+
+class CodexArchive(Case):
+    """`.works/` 는 사람이 직접 세션을 여는 자리이기도 하다: 저절로 도는 보관은 Orca 터미널에서 뜬 세션만."""
+
+    def test_only_orca_started_sessions_are_auto_archived(self):
+        self.add_web()
+        self.assertEqual(self.script("work.py", "new", "보관", "web").returncode, 0)
+        wt = str((self.target / ".works" / "T-0001-보관" / "web").resolve())
+        plugin = self.sb.tmp / "plugin"
+        plugin.mkdir()
+        (plugin / "config.json").write_text(json.dumps({"orca_workspaces": str(self.sb.tmp / "orca-ws"), "works_dir": ".works"}),
+                                            encoding="utf-8")
+        path = TEMPLATE / "harness" / "skeleton" / "plugin" / "scripts" / "archive-codex-session.py"
+        spec = importlib.util.spec_from_file_location("archive_codex_session_layout", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        env = {k: v for k, v in self.sb.env(PLUGIN_ROOT=str(plugin)).items()}
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertFalse(mod.in_workspace(wt, False), "사람이 다른 터미널에서 직접 연 세션까지 보관한다")
+            self.assertTrue(mod.in_workspace(wt, True))      # 정리 스크립트가 그 워크트리를 지우며 부른 경우
+            self.assertFalse(mod.in_workspace(str((self.target / ".repos" / "web").resolve()), True))   # 저장소 원본은 아니다
+            self.assertFalse(mod.in_workspace(str(self.target.resolve()), True))
+            with mock.patch.dict(os.environ, {"ORCA_TERMINAL_HANDLE": "term_1"}):
+                self.assertTrue(mod.in_workspace(wt, False))
+            # Orca 작업 폴더는 전과 같다(훅은 cwd 를 realpath 로 넘긴다)
+            self.assertTrue(mod.in_workspace(os.path.realpath(self.sb.tmp / "orca-ws" / "web" / "x"), False))
 
 
 if __name__ == "__main__":
