@@ -15,8 +15,11 @@
 2. 대상이 속한 git 작업 트리가 링크된 워크트리다(`git rev-parse --git-dir` != `--git-common-dir`).
 Bash 는 핵심 경로가 쓰기 대상일 때만 묻는다. 명령은 shellwords 로 읽는다(`cd X &&` · `sh -c` · `$(…)` · heredoc).
 위치를 알 수 없는 쓰기(`cd $X && …`)나 따옴표가 깨진 명령은 핵심 경로를 언급하면 묻는다. 완벽한 판정은 아니다.
+한 줄 코드(python -c · perl/ruby/node -e · `python3 - <<EOF`)는 쓰기 · 지우기 · 옮기기 · 다른 명령 실행을 할 수 있을 때만 묻는다.
+읽기로 확실한 것(open 읽기 모드 · json.load · read_text 등)만 있으면 묻지 않는다. 모르는 호출 · 동적 값 · exec/eval 은 묻는다.
 Codex 는 permissionDecision=ask 를 지원하지 않아 systemMessage 경고로 대신한다.
 """
+import ast
 import json
 import os
 import re
@@ -70,10 +73,195 @@ def inner_layout_dirs(cfg):
 PROTECTED, OWNER, INNER_DIRS = load_settings()
 # 쓰기 명령: 인자 중 핵심 경로가 있으면 묻는다. 읽기 명령(ls · cat · grep · find · git log 등)은 묻지 않는다.
 WRITE_CMDS = {"tee", "mv", "cp", "rm", "truncate", "ln", "touch", "mkdir", "rmdir", "install", "rsync", "patch"}
-INLINE_CMDS = {"python", "python3", "perl", "node", "ruby"}  # 한 줄 코드가 핵심 경로를 다루면 묻는다
+INLINE_CMDS = {"python", "python3", "perl", "node", "ruby"}  # 한 줄 코드가 핵심 경로를 쓸 수 있으면 묻는다
 PATCH_FILE = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", re.M)
-PATH_TOKEN = re.compile(r"[^\s\"'(),;=]+")
+PATH_TOKEN = re.compile(r"[^\s\"'(),;=<>|&{}]+")
 WHERE = f"규칙 변경은 격리 워크트리에서 하고, 기준 브랜치에 올릴 때 {OWNER} 확인을 거친다."
+
+
+# ── 한 줄 코드 판정 ─────────────────────────────────────────────────────────
+# 코드가 파일을 쓰기 · 지우기 · 옮기기 하거나 다른 명령을 돌릴 수 있으면(또는 판단이 애매하면) True.
+# 읽기로 확실한 것만 False 다. 모르는 호출 · 동적 값 · exec/eval 은 쓸 수 있는 쪽(True)으로 본다.
+
+# python: 이름으로 부르는 함수 중 파일을 건드리지 않는 것
+PY_SAFE_FUNCS = {
+    "print", "len", "str", "int", "float", "bool", "list", "dict", "set", "frozenset", "tuple", "bytes", "sorted",
+    "reversed", "enumerate", "range", "zip", "min", "max", "sum", "any", "all", "isinstance", "repr", "type", "map",
+    "filter", "abs", "round", "hasattr", "ord", "chr", "hex", "format", "iter", "next", "Path", "PurePath",
+    "PosixPath", "WindowsPath", "open",
+}
+# python: 받는 쪽과 상관없이 읽기만 하는 메서드 이름(os.path.* · json.load · str 메서드 · Path 조회)
+PY_SAFE_METHODS = {
+    "load", "loads", "dumps", "safe_load", "read", "read_text", "read_bytes", "readline", "readlines", "get", "keys",
+    "values", "items", "split", "rsplit", "strip", "lstrip", "rstrip", "join", "startswith", "endswith", "format",
+    "lower", "upper", "title", "casefold", "splitlines", "count", "find", "rfind", "index", "rindex", "partition",
+    "rpartition", "zfill", "ljust", "rjust", "center", "isdigit", "isalpha", "isspace", "append", "extend", "insert",
+    "pop", "sort", "encode", "decode", "exists", "is_file", "is_dir", "glob", "rglob", "iterdir", "resolve",
+    "relative_to", "with_suffix", "with_name", "match", "search", "findall", "finditer", "fullmatch", "sub", "compile",
+    "group", "groups", "setdefault", "listdir", "walk", "scandir", "getcwd", "abspath", "realpath", "relpath",
+    "dirname", "basename", "isfile", "isdir", "isabs", "expanduser", "getsize", "splitext", "normpath", "stat",
+    "fnmatch", "getenv", "as_posix", "absolute", "samefile", "update", "Path", "PurePath",
+}
+PY_DYNAMIC = {"exec", "eval", "compile", "__import__", "getattr", "setattr", "globals", "locals", "vars", "__builtins__"}
+PY_WRITE_MODE = set("wax+")
+# open 의 모드가 두 번째 인자인 모듈(그 밖의 X.open(...) 은 Path.open 처럼 첫 인자가 모드)
+PY_OPEN_MODE2 = {"io", "codecs", "gzip", "bz2", "lzma", "builtins"}
+PY_OPEN_UNSAFE = {"os", "tarfile", "zipfile", "shelve", "dbm", "webbrowser", "sqlite3", "tempfile"}
+
+
+def _py_open_writes(args, keywords, mode_index):
+    """open(…) 이 읽기 전용으로 확실하면 False."""
+    if any(k.arg in ("opener", None) for k in keywords):
+        return True
+    mode = next((k.value for k in keywords if k.arg == "mode"), None)
+    if mode is None and len(args) > mode_index:
+        mode = args[mode_index]
+    if any(isinstance(a, ast.Starred) for a in args):
+        return True
+    if mode is None:
+        return False
+    if not (isinstance(mode, ast.Constant) and isinstance(mode.value, str)):
+        return True  # 모드가 변수다
+    return bool(PY_WRITE_MODE & set(mode.value))
+
+
+def python_may_write(code):
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError):
+        return True
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in PY_DYNAMIC:
+            return True
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            return True
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            # 안전 목록의 이름을 다른 함수로 바꿔치기 못 하게 한다(from os import remove as print)
+            for al in node.names:
+                if (al.asname or al.name) in PY_SAFE_FUNCS and al.name not in ("Path", "PurePath", "PosixPath", "WindowsPath"):
+                    return True
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr, ast.For, ast.With,
+                             ast.FunctionDef, ast.ClassDef, ast.Lambda, ast.comprehension)):
+            names = []
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                names.append(node.name)
+            if isinstance(node, ast.Lambda):
+                names += [a.arg for a in node.args.args]
+            for t in ([node.target] if hasattr(node, "target") else []) + list(getattr(node, "targets", [])) \
+                    + [i.optional_vars for i in getattr(node, "items", []) if i.optional_vars is not None]:
+                for sub in ast.walk(t):
+                    if isinstance(sub, ast.Name):
+                        names.append(sub.id)
+                    elif isinstance(sub, ast.Attribute):
+                        names.append(sub.attr)
+            if any(n in PY_SAFE_FUNCS or n in PY_SAFE_METHODS for n in names):
+                return True
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if isinstance(f, ast.Name):
+            if f.id not in PY_SAFE_FUNCS:
+                return True
+            if f.id == "open" and _py_open_writes(node.args, node.keywords, 1):
+                return True
+        elif isinstance(f, ast.Attribute):
+            owner = f.value.id if isinstance(f.value, ast.Name) else None
+            if f.attr == "open":
+                if owner in PY_OPEN_UNSAFE:
+                    return True
+                if _py_open_writes(node.args, node.keywords, 1 if owner in PY_OPEN_MODE2 else 0):
+                    return True
+            elif f.attr == "replace":
+                if len(node.args) < 2:  # Path.replace(target) 는 파일을 옮긴다. str.replace(a, b) 는 글만 바꾼다
+                    return True
+            elif f.attr not in PY_SAFE_METHODS:
+                return True
+        else:
+            return True  # d['f']() · (lambda: …)() 처럼 무엇을 부르는지 모른다
+    return False
+
+
+PERL_WRITE = re.compile(r"\b(?:unlink|rename|rmdir|mkdir|truncate|chmod|chown|utime|link|symlink|system|exec|eval|"
+                        r"qx|sysopen|do|require|syscall|fork|kill|File::\w+|copy|move)\b|`")
+PERL_OPEN = re.compile(r"\bopen\s*\(?\s*(?:my\s+)?[$\w]+\s*,\s*(['\"])(.*?)\1(\s*,)?")
+NODE_WRITE = re.compile(
+    r"\b(?:write\w*|append\w*|unlink\w*|rm|rmSync|rmdir\w*|rename\w*|copy\w*|cp|cpSync|mkdir\w*|mkdtemp\w*|"
+    r"truncate\w*|symlink\w*|link|linkSync|chmod\w*|chown\w*|utimes\w*|open|openSync|createWriteStream|"
+    r"child_process|exec\w*|spawn\w*|fork|eval|Function|import|process\.binding|vm)\b|\brequire\s*\(\s*[^'\"\s]|`")
+RUBY_WRITE = re.compile(
+    r"\b(?:FileUtils|IO|Open3|Kernel|system|exec|spawn|eval|instance_eval|class_eval|send|public_send|"
+    r"syscall|fork|load|require)\b|%x|`|\bFile\.(?:write|binwrite|delete|unlink|rename|truncate|symlink|link|"
+    r"chmod|chown|utime|new|mkfifo)\b|\bDir\.(?:mkdir|rmdir|delete|unlink)\b|\.(?:write|syswrite|truncate)\b")
+RUBY_OPEN = re.compile(r"\b(?:File\.)?open\s*\(?\s*(['\"])(.*?)\1\s*(?:,\s*(['\"])(.*?)\3)?\s*([,)]?)")
+
+
+def perl_may_write(code, flags):
+    if any(f.startswith("-") and not f.startswith("--") and "i" in f[1:] for f in flags):
+        return True  # perl -i · -pi : 파일을 제자리에서 고친다
+    if PERL_WRITE.search(code):
+        return True
+    opens = len(re.findall(r"\bopen\b", code))
+    reads = 0
+    for m in PERL_OPEN.finditer(code):
+        mode, three = m.group(2).strip(), bool(m.group(3))
+        if three:
+            if mode not in ("<", "<:encoding(UTF-8)", "<:utf8", "<:raw"):
+                return True
+        elif mode[:1] in (">", "|", "+") or mode.endswith("|"):
+            return True
+        reads += 1
+    return opens != reads  # 모드를 못 읽은 open 이 있다
+
+
+def node_may_write(code):
+    return bool(NODE_WRITE.search(code))
+
+
+def ruby_may_write(code):
+    if RUBY_WRITE.search(code):
+        return True
+    opens = len(re.findall(r"\bopen\b", code))
+    reads = 0
+    for m in RUBY_OPEN.finditer(code):
+        path, mode = m.group(2), m.group(4)
+        if path.startswith("|") or (mode is not None and mode not in ("r", "rb", "rt", "r:UTF-8", "r:utf-8")):
+            return True
+        if mode is None and m.group(5) == ",":
+            return True  # 모드가 변수다
+        reads += 1
+    return opens != reads
+
+
+def inline_lang(head):
+    if re.match(r"^python[0-9.]*$", head):
+        return "python"
+    return head if head in ("perl", "node", "ruby") else None
+
+
+def inline_code(lang, rest):
+    """명령줄에서 코드(-c · -e) 와 그 밖의 인자. 코드 인자가 없으면 (None, rest)."""
+    flag = {"python": "c", "perl": "eE", "ruby": "e", "node": "ep"}[lang]
+    longs = ("--eval", "--print") if lang == "node" else ()
+    for i, t in enumerate(rest):
+        if t in longs or (t.startswith("-") and not t.startswith("--") and len(t) > 1 and t[-1] in flag):
+            if i + 1 < len(rest):
+                return rest[i + 1], rest[:i + 1] + rest[i + 2:]
+            return None, rest
+        if lang == "python" and not t.startswith("-"):
+            break  # 스크립트 파일 이름 뒤는 그 스크립트의 인자다
+    return None, rest
+
+
+def code_may_write(lang, code, flags=()):
+    if lang == "python":
+        return python_may_write(code)
+    if lang == "perl":
+        return perl_may_write(code, flags)
+    if lang == "node":
+        return node_may_write(code)
+    if lang == "ruby":
+        return ruby_may_write(code)
+    return True
 
 
 def ask(reason, data):
@@ -180,9 +368,17 @@ def writes_protected(judge, base, args, redirs):
             a = a.split("=")[-1]
             if mentions(a) and judge.protected(judge.resolve(base, a)):
                 return True
-    if head in INLINE_CMDS:
+    lang = inline_lang(head)
+    if lang:
         text = " ".join(rest)
-        if mentions(text) and re.search(r"open\(|write|unlink|rename|replace", text):
+        if not mentions(text):
+            return False
+        code, others = inline_code(lang, rest)
+        if code is None:  # 스크립트 파일 실행 · 표준 입력: 예전 기준(쓰기 낌새가 있으면 경로를 본다)
+            hit = re.search(r"open\(|write|unlink|rename|replace", text) or (lang == "perl" and perl_may_write("", rest))
+        else:
+            hit = code_may_write(lang, code, others)
+        if hit:
             for t in PATH_TOKEN.findall(text):
                 if mentions(t) and judge.protected(judge.resolve(base, t)):
                     return True
@@ -204,8 +400,19 @@ def bash_writes_protected(judge, base, cmd):
                 return True
     # heredoc 을 코드로 받는 명령(python3 - <<EOF · sh <<EOF)은 본문이 핵심 경로를 쓰는지 본다
     for header, body in shellwords.heredocs(cmd):
-        if mentions(body) and re.search(r"open\(|write|unlink|rename|replace|>", body) \
-                and re.search(r"(?:^|[\s;&|(])(?:python[0-9.]*|perl|ruby|node|sh|bash|zsh)\b", header):
+        if not mentions(body):
+            continue
+        m = re.search(r"(?:^|[\s;&|(])(python[0-9.]*|perl|ruby|node|sh|bash|zsh)\b", header)
+        if not m:
+            continue
+        lang = inline_lang(m.group(1))
+        if lang is None:  # 셸 본문: 예전 기준
+            hit = re.search(r"open\(|write|unlink|rename|replace|>", body)
+        elif re.search(r"<<-?\s*[A-Za-z_]", header) and re.search(r"[$`]", body):
+            hit = True  # 따옴표 없는 heredoc: 셸이 본문의 $ · 백틱을 먼저 바꿔 코드를 확정할 수 없다
+        else:
+            hit = code_may_write(lang, body)
+        if hit:
             for t in PATH_TOKEN.findall(body):
                 if mentions(t) and judge.protected(judge.resolve(base, t)):
                     return True

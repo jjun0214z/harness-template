@@ -94,6 +94,64 @@ class RuleGuard(Built):
                     "cat <<'EOF' > docs/기록/a.md\nCLAUDE.md 를 고쳤다\nEOF"):
             self.assertIsNone(self.rules(cmd), cmd)
 
+    # 한 줄 코드(python · perl · node · ruby): 읽기로 확실하면 묻지 않고, 쓸 수 있거나 애매하면 묻는다
+    INLINE_READS = (
+        """python3 -c "import json;d=json.load(open('.claude/settings.json'));print(d.get('hooks', {}).keys())" """,
+        """python3 -c "import json;print(json.load(open('harness.json', 'r', encoding='utf-8'))['project'])" """,
+        """python3 -c "print(open('CLAUDE.md', mode='rb').read()[:10])" """,
+        """python3 -c "from pathlib import Path;print(Path('CLAUDE.md').read_text().splitlines()[:3])" """,
+        """python3 -c "import sys;print(open(sys.argv[1]).read())" CLAUDE.md""",
+        """python3 -c "print('CLAUDE.md'.replace('.md', ''))" """,
+        "python3 - <<'EOF'\nimport json\nwith open('harness.json', encoding='utf-8') as f:\n    print(json.load(f)['rules'])\nEOF",
+        """node -e "console.log(require('fs').readFileSync('CLAUDE.md', 'utf8').length)" """,
+        """ruby -e "puts File.read('CLAUDE.md').lines.first" """,
+        "perl -ne 'print if /push/' CLAUDE.md",
+        """perl -e 'open(my $f, "<", "harness.json"); print <$f>'""",
+    )
+    INLINE_WRITES = (
+        """python3 -c "open('CLAUDE.md', 'a').write('x')" """,
+        """python3 -c "open('harness.json', 'r+').write('x')" """,
+        """python3 -c "m='w';open('CLAUDE.md', m)" """,
+        """python3 -c "import os;os.remove('harness.json')" """,
+        """python3 -c "import os;os.rename('CLAUDE.md', 'x.md')" """,
+        """python3 -c "import shutil;shutil.copy('a.md', 'CLAUDE.md')" """,
+        """python3 -c "from pathlib import Path;Path('CLAUDE.md').write_text('x')" """,
+        """python3 -c "from pathlib import Path;Path('.claude/settings.json').unlink()" """,
+        """python3 -c "from pathlib import Path;Path('CLAUDE.md').replace('x.md')" """,
+        """python3 -c "from pathlib import Path;Path('harness/x').mkdir()" """,
+        """python3 -c "import subprocess;subprocess.run(['rm', 'CLAUDE.md'])" """,
+        """python3 -c "import os;os.system('rm CLAUDE.md')" """,
+        """python3 -c "import json;json.dump({}, open('harness.json', 'w'))" """,
+        """python3 -c "exec('x');print(open('CLAUDE.md').read())" """,
+        """python3 -c "from os import remove as print;print('CLAUDE.md')" """,
+        """python3 -c "import sys,os;os.unlink(sys.argv[1])" CLAUDE.md""",
+        "python3 - <<'EOF'\nimport json\njson.dump({}, open('harness.json', 'w'))\nEOF",
+        "python3 - <<EOF\nprint(open('CLAUDE.md').read())\n$(rm x)\nEOF",
+        "perl -i -pe 's/a/b/' CLAUDE.md",
+        """perl -e 'open(F, ">CLAUDE.md"); print F "x"'""",
+        """perl -e 'unlink "CLAUDE.md"'""",
+        """node -e "require('fs').writeFileSync('CLAUDE.md', 'x')" """,
+        """node -e "require('fs').unlinkSync('harness.json')" """,
+        """ruby -e "File.write('CLAUDE.md', 'x')" """,
+        """ruby -e "File.open('CLAUDE.md', 'w') { |f| f << 'x' }" """,
+    )
+
+    def test_inline_reads_quiet(self):
+        for cmd in self.INLINE_READS:
+            self.assertIsNone(self.rules(cmd), cmd)
+
+    def test_inline_writes_ask(self):
+        for cmd in self.INLINE_WRITES:
+            self.assertEqual(self.rules(cmd), "ask", cmd)
+
+    def test_inline_codex_same_rule(self):
+        def codex(cmd):
+            return run_hook(self.target / "harness" / "hooks" / "guard-rules.py",
+                            {"tool_name": "exec_command", "cwd": str(self.target), "turn_id": "t1",
+                             "tool_input": {"cmd": cmd}}, self.env())
+        self.assertEqual(codex(self.INLINE_READS[0]), "")
+        self.assertIn("systemMessage", codex(self.INLINE_WRITES[0]))
+
 
 class SyncAndStop(unittest.TestCase):
     """원격이 있는 하네스: 다른 곳에서 올린 커밋을 받을 때 · 턴이 끝날 때."""
