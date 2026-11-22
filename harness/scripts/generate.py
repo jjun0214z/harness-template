@@ -727,11 +727,46 @@ def plugin_scripts(cfg: dict) -> List[str]:
     return names
 
 
-def claude_settings(cfg: dict) -> dict:
+def repo_extra_dirs(cfg: dict) -> List[str]:
+    """하네스 밖에 있는 작업 저장소(옆 배치 · 이 컴퓨터 폴더 연결). 안쪽 배치(`.repos/<폴더>`)는 이미 하네스 폴더 안이라 넣지 않는다."""
+    return [hl.repo_ref(r, cfg) for r in cfg["repos"]
+            if not (hl.repos_inside(cfg) and not (r.get("source") == "local" and r.get("path")))]
+
+
+def generated_dir_candidates(cfg: dict) -> set:
+    """생성기가 지금이나 예전에 additionalDirectories 에 넣었을 수 있는 값(배치가 바뀌어도 알아본다)."""
+    lay = hl.layout_of(cfg)
+    out = set()
+    for r in cfg["repos"]:
+        out |= {f"../{r['dir']}", f"{lay['repos_dir']}/{r['dir']}", hl.repo_ref(r, cfg)}
+    return out
+
+
+def human_permissions(cfg: dict, existing: Optional[dict]) -> dict:
+    """기존 .claude/settings.json 의 permissions 중 사람이 넣은 것(생성기 몫이 아닌 칸 · 항목)."""
+    perms = (existing or {}).get("permissions") if isinstance(existing, dict) else None
+    if not isinstance(perms, dict):
+        return {}
+    out = {k: v for k, v in perms.items() if k != "additionalDirectories"}
+    dirs = perms.get("additionalDirectories")
+    if isinstance(dirs, list):
+        inner = f"{hl.layout_of(cfg)['repos_dir']}/" if hl.repos_inside(cfg) else None
+        gen = generated_dir_candidates(cfg)
+        keep = [d for d in dirs if isinstance(d, str) and d not in gen and not (inner and d.startswith(inner))]
+        if keep:
+            out["additionalDirectories"] = keep
+    return out
+
+
+def claude_settings(cfg: dict, existing: Optional[dict] = None) -> dict:
     py, slug = cfg["platform"]["python"], cfg["project"]["slug"]
     cmd = lambda s: f'{py} "$CLAUDE_PROJECT_DIR/harness/hooks/{s}"'  # noqa: E731
+    perms = human_permissions(cfg, existing)
+    dirs = repo_extra_dirs(cfg)
+    dirs += [d for d in perms.pop("additionalDirectories", []) if d not in dirs]
+    if dirs:
+        perms = {"additionalDirectories": dirs, **perms}
     settings = {
-        "permissions": {"additionalDirectories": [hl.repo_ref(r, cfg) for r in cfg["repos"]]},
         "hooks": {
             "PreToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
                             "hooks": [{"type": "command", "command": cmd("guard-rules.py")}]}],
@@ -742,10 +777,52 @@ def claude_settings(cfg: dict) -> dict:
         },
         "enabledPlugins": {f"{slug}@{slug}": True},
     }
+    if perms:
+        settings = {"permissions": perms, **settings}
     remote = cfg["harness_repo"].get("remote")
     if remote:
         settings["extraKnownMarketplaces"] = {slug: {"source": {"source": "github", "repo": remote}}}
     return settings
+
+
+def local_work_dirs(cfg: dict, root: Path, dry_run: bool = False) -> Optional[str]:
+    """안쪽 배치의 `.repos` · `.works` 를 이 컴퓨터 전용 설정(본 체크아웃의 .claude/settings.local.json)에 절대 경로로 넣는다.
+
+    하네스의 다른 워크트리(예: Orca 워크트리, 본 폴더 밖)에서 연 세션도 본 폴더의 작업 레포 · 워크트리를 확인 창 없이 쓰게 한다.
+    Claude Code 는 워크트리에서도 본 체크아웃 루트의 settings.local.json 을 읽고, 목록 키는 파일끼리 합친다(공식 문서 settings).
+    기계마다 다른 절대 경로라 커밋하는 settings.json 에는 넣지 않는다(.gitignore 가 settings.local.json 을 거른다).
+    사람이 · Claude Code 가 넣은 다른 항목은 그대로 둔다. 바꿨으면 그 파일 경로를 돌려준다."""
+    lay = hl.layout_of(cfg)
+    names = [lay[k] for k, on in (("repos_dir", hl.repos_inside(cfg)), ("works_dir", hl.works_inside(cfg))) if on]
+    if not names:
+        return None
+    main = hl.git_main_root(root) or Path(root)
+    want = [str((main / n).resolve()) for n in names]
+    path = main / ".claude" / "settings.local.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError):
+        return None  # 사람이 고치다 만 파일: 건드리지 않는다
+    if not isinstance(data, dict):
+        return None
+    perms = data.get("permissions")
+    if perms is None:
+        perms = data["permissions"] = {}
+    if not isinstance(perms, dict):
+        return None
+    dirs = perms.get("additionalDirectories")
+    if dirs is None:
+        dirs = perms["additionalDirectories"] = []
+    if not isinstance(dirs, list):
+        return None
+    missing = [d for d in want if d not in dirs]
+    if not missing:
+        return None
+    dirs.extend(missing)
+    if not dry_run:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(jdump(data), encoding="utf-8")
+    return str(path)
 
 
 def codex_hooks(cfg: dict) -> dict:
@@ -873,7 +950,14 @@ def generate(cfg: dict, root: Path, dry_run: bool = False, created_repos: Option
         managed(".claude-plugin/marketplace.json", jdump({
             "name": slug, "owner": {"name": cfg["project"].get("github_org") or slug},
             "plugins": [{"name": slug, "source": f"./{pdir}", "description": desc}]}))
-        managed(".claude/settings.json", jdump(claude_settings(cfg)))
+        try:
+            prev_settings = json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            prev_settings = None
+        managed(".claude/settings.json", jdump(claude_settings(cfg, prev_settings)))
+        local = local_work_dirs(cfg, root, dry_run)
+        if local:
+            w.changed.append(f"(이 컴퓨터) {local}")
     if hl.has(cfg, "codex"):
         managed(f"{pdir}/.codex-plugin/plugin.json", jdump({
             "name": slug, "version": PLUGIN_VERSION, "description": desc,

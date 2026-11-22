@@ -90,7 +90,8 @@ class Inside(Case):
         ignore = self.read(".gitignore")
         self.assertIn(".repos/\n", ignore)
         self.assertIn(".works/\n", ignore)
-        self.assertEqual(json.loads(self.read(".claude/settings.json"))["permissions"]["additionalDirectories"], [".repos/web"])
+        # 안쪽 배치: 작업 레포는 이미 하네스 폴더 안이라 additionalDirectories 에 넣지 않는다
+        self.assertNotIn("additionalDirectories", json.loads(self.read(".claude/settings.json")).get("permissions", {}))
         self.assertEqual(json.loads(self.read("harness.json"))["layout"], INSIDE)
         # 저장소 CLAUDE.md: 하네스는 두 단계 위 · 여기서 연 세션은 작업자
         repo_md = (web / "CLAUDE.md").read_text(encoding="utf-8")
@@ -262,6 +263,8 @@ class Beside(Case):
         self.assertNotIn(".works/", ignore)
         self.assertNotIn("하네스 루트에서 연 세션", self.read("CLAUDE.md"))
         self.assertIn("`../orchestrator`", (web / "CLAUDE.md").read_text(encoding="utf-8"))
+        self.assertEqual(json.loads(self.read(".claude/settings.json"))["permissions"]["additionalDirectories"], ["../web"],
+                         "옆 배치: 하네스 밖 저장소는 그대로 넣는다")
         self.assertEqual(json.loads(self.read("harness.json"))["layout"], hl.LAYOUT_BESIDE)
         self.assertNotIn("works_dir", json.loads(self.read("plugins/lay/config.json")))
         r = self.script("work.py", "new", "시험", "web")
@@ -276,6 +279,64 @@ class Beside(Case):
         r = self.script("cleanup_worktrees.py", "--apply", RECENT_MIN="0")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue((web / ".git").exists())
+
+
+class InsideSettingsDirs(Case):
+    def test_regenerate_drops_generated_repo_dirs_and_keeps_human_ones(self):
+        self.add_web()
+        path = self.target / ".claude" / "settings.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        # 옛 생성기가 넣었던 항목 + 사람이 넣은 항목
+        data.setdefault("permissions", {})["additionalDirectories"] = [".repos/web", "../shared-assets", "/opt/data"]
+        data["permissions"]["allow"] = ["Bash(ls:*)"]
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        r = self.script("generate.py")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        perms = json.loads(path.read_text(encoding="utf-8"))["permissions"]
+        self.assertEqual(perms["additionalDirectories"], ["../shared-assets", "/opt/data"])
+        self.assertEqual(perms["allow"], ["Bash(ls:*)"])
+        self.assertIn("hooks", json.loads(path.read_text(encoding="utf-8")))
+
+
+class LocalWorkDirs(Case):
+    """안쪽 배치: 본 폴더의 .repos · .works 를 이 컴퓨터 전용 settings.local.json 에 절대 경로로 넣는다(워크트리 세션용)."""
+
+    def local(self):
+        return json.loads(self.read(".claude/settings.local.json"))
+
+    def test_written_once_and_keeps_other_entries(self):
+        want = [str((self.target / ".repos").resolve()), str((self.target / ".works").resolve())]
+        self.assertEqual(self.local()["permissions"]["additionalDirectories"], want)
+        self.assertNotIn(str(self.target), self.read(".claude/settings.json"), "커밋하는 설정에는 절대 경로를 넣지 않는다")
+        self.assertIn(".claude/settings.local.json", self.read(".gitignore"))
+        # Claude Code · 사람이 넣은 것은 그대로, 다시 생성해도 겹치지 않는다
+        data = self.local()
+        data["permissions"]["allow"] = ["Bash(ls:*)"]
+        data["permissions"]["additionalDirectories"].insert(0, "/opt/data")
+        (self.target / ".claude" / "settings.local.json").write_text(json.dumps(data), encoding="utf-8")
+        r = self.script("generate.py")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.local()["permissions"], {"allow": ["Bash(ls:*)"], "additionalDirectories": ["/opt/data"] + want})
+
+    def test_generate_from_a_worktree_writes_the_main_checkout_file(self):
+        (self.target / ".claude" / "settings.local.json").unlink()
+        self.git(self.target, "add", "-A")
+        self.git(self.target, "commit", "-qm", "x")
+        wt = self.sb.tmp / "orca-wt"
+        self.git(self.target, "worktree", "add", "-q", str(wt), "-b", "orca-x")
+        r = subprocess.run([sys.executable, str(wt / "harness" / "scripts" / "generate.py")], capture_output=True,
+                           text=True, encoding="utf-8", env=self.sb.env())
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse((wt / ".claude" / "settings.local.json").exists())
+        self.assertEqual(self.local()["permissions"]["additionalDirectories"],
+                         [str((self.target / ".repos").resolve()), str((self.target / ".works").resolve())])
+
+
+class BesideNoLocalDirs(Case):
+    layout = None
+
+    def test_beside_layout_writes_no_local_file(self):
+        self.assertFalse((self.target / ".claude" / "settings.local.json").exists())
 
 
 class ZeroRepos(Case):

@@ -162,8 +162,10 @@ def stop(root, data):
     _, dirty, _ = git(root, "status", "--porcelain", "--untracked-files=all")
     # 안쪽 배치의 작업 레포 · 워크트리 폴더는 하네스 변경이 아니다(.gitignore 블록이 낡은 하네스에서도 막지 않게 거른다)
     inner = tuple(d.rstrip("/") + "/" for d in inner_dirs(root))
+    # .claude/settings.local.json 은 이 컴퓨터 전용 설정(생성기 · Claude Code 가 쓴다)이라 하네스 변경이 아니다
     dirty = "\n".join(l for l in dirty.splitlines() if not is_bytecode_cache(l)
-                      and not (inner and l.split(None, 1)[-1].strip('"').startswith(inner)))
+                      and not (inner and l.split(None, 1)[-1].strip('"').startswith(inner))
+                      and l.split(None, 1)[-1].strip('"') != ".claude/settings.local.json")
     ahead = ""
     up = upstream(root)
     if up and not linked_worktree(root):
