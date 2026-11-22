@@ -201,6 +201,28 @@ class SyncAndStop(unittest.TestCase):
         self.assertNotIn("규칙이 바뀌었다", out)
         self.assertEqual(self.hook("SessionStart"), "", "받을 것이 없으면 조용하다")
 
+    def test_push_from_harness_worktree_with_rule_change_asks(self):
+        """하네스 워크트리에서 `git push origin HEAD:main`(규칙 파일이 바뀐 커밋) 은 묻는다. cd · git -C 모양 모두."""
+        wt = self.target / ".works" / "rule-x" / "orchestrator"
+        self.git(self.target, "worktree", "add", "-q", str(wt), "-b", "rule-x", "origin/main")
+        p = wt / "CLAUDE.md"
+        p.write_text(p.read_text(encoding="utf-8") + "\n규칙 바뀜\n", encoding="utf-8")
+        self.git(wt, "commit", "-qam", "규칙")
+        guard = self.target / "plugins" / "demo" / "scripts" / "guard-push.py"
+        env = self.sb.env(PLUGIN_ROOT=str(self.target / "plugins" / "demo"), CLAUDE_PROJECT_DIR=str(self.target))
+        for cwd, cmd in ((wt, "git push origin HEAD:main"),
+                         (self.target, f'cd "{wt}" && git fetch origin -q && git push origin HEAD:main 2>&1 | tail -3'),
+                         (self.target, f'git -C "{wt}" push origin rule-x:main')):
+            out = run_hook(guard, {"tool_name": "Bash", "cwd": str(cwd), "tool_input": {"command": cmd}}, env)
+            self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask", cmd)
+            self.assertIn("CLAUDE.md", out["hookSpecificOutput"]["permissionDecisionReason"], cmd)
+        # 규칙 파일이 안 바뀐 push 는 평소대로 지나간다
+        self.git(wt, "reset", "-q", "--hard", "origin/main")
+        (wt / "상황판.md").write_text("x\n", encoding="utf-8")
+        self.git(wt, "add", "상황판.md")
+        self.git(wt, "commit", "-qm", "상황판")
+        self.assertEqual(run_hook(guard, {"tool_name": "Bash", "cwd": str(wt), "tool_input": {"command": "git push origin HEAD:main"}}, env), "")
+
     def test_stop_blocks_once_per_state(self):
         (self.target / "메모.txt").write_text("x", encoding="utf-8")
         self.assertEqual(self.hook("Stop", session_id="s1")["decision"], "block")
