@@ -7,13 +7,19 @@ SessionStart: 원격에서 fast-forward 로만 받아온다. 다른 기기에서
   「문서가 바뀌었을 수 있다」로 뭉뚱그리면 세션이 옛 절차를 그대로 쓴다.
   workflow 묶음을 켰으면 열린 작업과 누구 차례를 한 줄로 알린다(work.py --brief, 원격이 없어도).
   등록된 저장소가 0개면 「저장소 추가가 먼저다 · 오케스트레이터가 직접 만들지 않는다」를 한 줄로 알린다.
+  Claude 세션이 하네스 루트(본 체크아웃 · Orca 같은 하네스 밖 워크트리)에서 열렸고 사람이 정한 제목이 없으면
+  세션 제목을 「<프로젝트 이름> 오케스트레이터」로 단다(hookSpecificOutput.sessionTitle = /rename 과 같은 효과).
+  입력 session_title 은 사람이 정한 제목(--name · /rename · 훅)이 있을 때만 온다(자동 생성 제목은 안 온다) → 있으면 덮지 않는다.
+  작업자 자리(.works/ · .work/ · .claude/worktrees/ 아래)와 Codex 는 제목을 달지 않는다.
 Stop: 공유 체크아웃에 커밋 안 된 변경이나 push 안 된 커밋이 남아 있으면 막고 커밋·push 를 요구한다.
   격리 워크트리(작업자 자리)는 push 하지 않는 것이 규칙이라 커밋 안 된 변경만 막는다.
   **같은 세션에서 같은 상태로는 한 번만 막는다.** Stop 은 턴마다 돌아서, 매번 막으면 읽히지 않고 넘겨진다.
   상태(변경 · 커밋 목록)가 바뀌면 다시 막는다. 지문은 git 폴더 안에 두어 커밋에 섞이지 않는다.
   자동 커밋은 하지 않는다. 여러 세션이 같은 저장소를 고칠 수 있어 엉뚱한 변경이 섞여 올라간다.
 """
+import contextlib
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -55,7 +61,62 @@ def is_rule_file(path, prot):
     return any(path == p or (p.endswith("/") and path.startswith(p)) for p in prot)
 
 
-def session_start(root):
+TITLE_MAX = 60
+
+
+def harness_root_session(root):
+    """하네스 루트 세션인가: 본 체크아웃이거나, 작업자 자리(.works · .work · .claude/worktrees) 밖의 하네스 워크트리."""
+    if not os.path.isfile(os.path.join(root, "harness.json")):
+        return False
+    _, common, _ = git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not common:
+        return False
+    main = os.path.dirname(os.path.realpath(common)) if os.path.basename(common) == ".git" else os.path.realpath(common)
+    here = os.path.realpath(root) + os.sep
+    workers = [os.path.join(main, ".claude", "worktrees"), os.path.join(os.path.dirname(main), ".work")]
+    workers += [os.path.join(main, d) for d in inner_dirs(root)]
+    return not any(here.startswith(os.path.realpath(w) + os.sep) for w in workers)
+
+
+def session_title(root, data):
+    """붙일 세션 제목. 붙이지 않으면 None."""
+    if data.get("turn_id") or not os.environ.get("CLAUDE_PROJECT_DIR"):
+        return None  # Codex(또는 Claude 밖): 제목 출력 형식이 다르다
+    if data.get("session_title") or data.get("source") not in ("startup", "resume", "fork"):
+        return None  # 사람이 정한 제목은 덮지 않는다
+    if not harness_root_session(root):
+        return None
+    try:
+        with open(os.path.join(root, "harness.json"), encoding="utf-8") as f:
+            name = ((json.load(f).get("project") or {}).get("name") or "").strip()
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(name, str) or not name:
+        return None
+    tail = " 오케스트레이터"
+    if len(name) + len(tail) > TITLE_MAX:
+        name = name[:TITLE_MAX - len(tail) - 1].rstrip() + "…"
+    return name + tail
+
+
+def session_start(root, data=None):
+    data = data or {}
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        sync_lines(root)
+    text = buf.getvalue().strip()
+    title = session_title(root, data)
+    if title:
+        out = {"hookEventName": "SessionStart", "sessionTitle": title}
+        if text:
+            out["additionalContext"] = text
+        print(json.dumps({"hookSpecificOutput": out}, ensure_ascii=False))
+    elif text:
+        print(text)
+    sys.exit(0)
+
+
+def sync_lines(root):
     if upstream(root):
         _, before, _ = git(root, "rev-parse", "HEAD")
         code, _, err = git(root, "pull", "--ff-only", "--quiet")
@@ -68,7 +129,6 @@ def session_start(root):
                 print(received_line(root, before, after))
     repos_line(root)
     work_line(root)
-    sys.exit(0)
 
 
 # harnesslib.LAYOUT_RESERVED · layout_dir_ok 와 같은 목록 · 같은 조건이다(훅은 하네스 스크립트를 import 하지 않는다). 고치면 둘 다 고친다.
@@ -221,7 +281,7 @@ def main():
             or data.get("cwd") or os.getcwd())
     event = data.get("hook_event_name", "")
     if event == "SessionStart":
-        session_start(root)
+        session_start(root, data)
     elif event == "Stop":
         stop(root, data)
     sys.exit(0)

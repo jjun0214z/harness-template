@@ -223,6 +223,38 @@ class SyncAndStop(unittest.TestCase):
         self.git(wt, "commit", "-qm", "상황판")
         self.assertEqual(run_hook(guard, {"tool_name": "Bash", "cwd": str(wt), "tool_input": {"command": "git push origin HEAD:main"}}, env), "")
 
+    def start_in(self, root, **extra):
+        payload = {"hook_event_name": "SessionStart", "cwd": str(root), "source": "startup", **extra}
+        return run_hook(root / "harness" / "hooks" / "harness-sync.py", payload,
+                        self.sb.env(CLAUDE_PROJECT_DIR=str(root)))
+
+    def test_session_title_for_harness_root_sessions(self):
+        title = "Demo 프로젝트 오케스트레이터"
+        out = self.start_in(self.target)
+        self.assertEqual(out["hookSpecificOutput"]["sessionTitle"], title)
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "SessionStart")
+        self.assertEqual(self.start_in(self.target, source="resume")["hookSpecificOutput"]["sessionTitle"], title)
+        # 원격에서 받은 알림 같은 줄은 additionalContext 로 옮겨 간다
+        self.push_from_other(["CLAUDE.md"])
+        self.assertIn("규칙이 바뀌었다: CLAUDE.md", self.start_in(self.target)["hookSpecificOutput"]["additionalContext"])
+        # 하네스 밖 워크트리(Orca 자리)도 하네스 루트 세션이다
+        orca = self.sb.tmp / "orca" / "bristlemouth"
+        self.git(self.target, "worktree", "add", "-q", str(orca), "-b", "orca-x")
+        self.assertEqual(self.start_in(orca)["hookSpecificOutput"]["sessionTitle"], title)
+
+    def test_session_title_left_alone(self):
+        # 사람이 정한 제목(/rename · --name) 이 있으면 덮지 않는다
+        out = self.start_in(self.target, session_title="내 제목")
+        self.assertFalse(isinstance(out, dict) and "sessionTitle" in out.get("hookSpecificOutput", {}), out)
+        # Codex 세션 · clear 같은 다른 source 는 손대지 않는다
+        out = self.start_in(self.target, turn_id="t1")
+        self.assertNotIsInstance(out, dict)
+        self.assertNotIsInstance(self.start_in(self.target, source="clear"), dict)
+        # 작업자 자리(.work · .claude/worktrees)에서 연 세션은 오케스트레이터가 아니다
+        for wt in (self.sb.projects / ".work" / "orchestrator-y", self.target / ".claude" / "worktrees" / "agent-z"):
+            self.git(self.target, "worktree", "add", "-q", str(wt), "-b", wt.name)
+            self.assertNotIsInstance(self.start_in(wt), dict, str(wt))
+
     def test_stop_blocks_once_per_state(self):
         (self.target / "메모.txt").write_text("x", encoding="utf-8")
         self.assertEqual(self.hook("Stop", session_id="s1")["decision"], "block")
