@@ -17,6 +17,8 @@ Bash 는 핵심 경로가 쓰기 대상일 때만 묻는다. 명령은 shellword
 위치를 알 수 없는 쓰기(`cd $X && …`)나 따옴표가 깨진 명령은 핵심 경로를 언급하면 묻는다. 완벽한 판정은 아니다.
 한 줄 코드(python -c · perl/ruby/node -e · `python3 - <<EOF`)는 쓰기 · 지우기 · 옮기기 · 다른 명령 실행을 할 수 있을 때만 묻는다.
 읽기로 확실한 것(open 읽기 모드 · json.load · read_text 등)만 있으면 묻지 않는다. 모르는 호출 · 동적 값 · exec/eval 은 묻는다.
+한계: 이 훅은 실수 방지용이며 의도적 우회를 다 막지는 못한다(경로를 글자 조합 · 변수로 만들거나, 별도 스크립트 파일을
+실행하거나, 모르는 라이브러리의 읽기처럼 보이는 함수가 실제로 쓰는 경우 등).
 Codex 는 permissionDecision=ask 를 지원하지 않아 systemMessage 경고로 대신한다.
 """
 import ast
@@ -83,114 +85,160 @@ WHERE = f"규칙 변경은 격리 워크트리에서 하고, 기준 브랜치에
 # 코드가 파일을 쓰기 · 지우기 · 옮기기 하거나 다른 명령을 돌릴 수 있으면(또는 판단이 애매하면) True.
 # 읽기로 확실한 것만 False 다. 모르는 호출 · 동적 값 · exec/eval 은 쓸 수 있는 쪽(True)으로 본다.
 
-# python: 이름으로 부르는 함수 중 파일을 건드리지 않는 것
+# python: 이름으로 부르는 내장 함수 중 파일을 건드리지 않는 것(open 은 모드를 따로 본다)
 PY_SAFE_FUNCS = {
     "print", "len", "str", "int", "float", "bool", "list", "dict", "set", "frozenset", "tuple", "bytes", "sorted",
-    "reversed", "enumerate", "range", "zip", "min", "max", "sum", "any", "all", "isinstance", "repr", "type", "map",
-    "filter", "abs", "round", "hasattr", "ord", "chr", "hex", "format", "iter", "next", "Path", "PurePath",
-    "PosixPath", "WindowsPath", "open",
+    "reversed", "enumerate", "range", "zip", "min", "max", "sum", "any", "all", "isinstance", "repr", "type",
+    "abs", "round", "hasattr", "ord", "chr", "hex", "format", "iter", "next", "open",
 }
-# python: 받는 쪽과 상관없이 읽기만 하는 메서드 이름(os.path.* · json.load · str 메서드 · Path 조회)
+# python: 「모듈.함수」 단위로 읽기만 하는 것. import 별칭을 풀어 이 이름과 맞춘다
+PY_SAFE_QUALIFIED = {
+    "json.load", "json.loads", "json.dumps", "os.listdir", "os.getcwd", "os.walk", "os.scandir", "os.getenv",
+    "os.environ.get", "os.path.join", "os.path.exists", "os.path.isfile", "os.path.isdir", "os.path.basename",
+    "os.path.dirname", "os.path.abspath", "os.path.realpath", "os.path.relpath", "os.path.expanduser",
+    "os.path.splitext", "os.path.normpath", "os.path.getsize", "os.path.isabs", "glob.glob", "re.match",
+    "re.search", "re.findall", "re.finditer", "re.fullmatch", "re.sub", "re.split", "re.compile", "sys.exit",
+    "fnmatch.fnmatch", "pathlib.Path", "pathlib.PurePath", "pathlib.Path.cwd", "pathlib.Path.home",
+}
+PY_OPEN_QUALIFIED = {"io.open", "codecs.open", "builtins.open"}  # open 처럼 두 번째 인자부터 모드
+# python: 부르지 않고 값으로만 읽는 모듈 속성
+PY_SAFE_ATTRS = {"sys.argv", "sys.stdin", "sys.stdout", "sys.stderr", "sys.platform", "sys.version", "os.environ",
+                 "os.sep", "os.linesep", "os.path.sep", "os.curdir"}
+# python: 받는 쪽이 모듈이 아닐 때(문자열 · dict · list · Path · 정규식 결과) 읽기만 하는 메서드
 PY_SAFE_METHODS = {
-    "load", "loads", "dumps", "safe_load", "read", "read_text", "read_bytes", "readline", "readlines", "get", "keys",
-    "values", "items", "split", "rsplit", "strip", "lstrip", "rstrip", "join", "startswith", "endswith", "format",
-    "lower", "upper", "title", "casefold", "splitlines", "count", "find", "rfind", "index", "rindex", "partition",
-    "rpartition", "zfill", "ljust", "rjust", "center", "isdigit", "isalpha", "isspace", "append", "extend", "insert",
-    "pop", "sort", "encode", "decode", "exists", "is_file", "is_dir", "glob", "rglob", "iterdir", "resolve",
-    "relative_to", "with_suffix", "with_name", "match", "search", "findall", "finditer", "fullmatch", "sub", "compile",
-    "group", "groups", "setdefault", "listdir", "walk", "scandir", "getcwd", "abspath", "realpath", "relpath",
-    "dirname", "basename", "isfile", "isdir", "isabs", "expanduser", "getsize", "splitext", "normpath", "stat",
-    "fnmatch", "getenv", "as_posix", "absolute", "samefile", "update", "Path", "PurePath",
+    "read", "read_text", "read_bytes", "readline", "readlines", "get", "keys", "values", "items", "split", "rsplit",
+    "strip", "lstrip", "rstrip", "join", "startswith", "endswith", "format", "lower", "upper", "title", "casefold",
+    "splitlines", "count", "find", "rfind", "index", "rindex", "partition", "rpartition", "zfill", "ljust", "rjust",
+    "center", "isdigit", "isalpha", "isspace", "append", "extend", "insert", "pop", "sort", "encode", "decode",
+    "exists", "is_file", "is_dir", "glob", "rglob", "iterdir", "resolve", "relative_to", "with_suffix", "with_name",
+    "match", "search", "findall", "finditer", "fullmatch", "sub", "group", "groups", "setdefault", "update",
+    "stat", "as_posix", "absolute", "samefile",
 }
-PY_DYNAMIC = {"exec", "eval", "compile", "__import__", "getattr", "setattr", "globals", "locals", "vars", "__builtins__"}
+PY_DYNAMIC = {"exec", "eval", "compile", "__import__", "getattr", "setattr", "delattr", "globals", "locals", "vars",
+              "__builtins__", "breakpoint", "input"}
 PY_WRITE_MODE = set("wax+")
-# open 의 모드가 두 번째 인자인 모듈(그 밖의 X.open(...) 은 Path.open 처럼 첫 인자가 모드)
-PY_OPEN_MODE2 = {"io", "codecs", "gzip", "bz2", "lzma", "builtins"}
-PY_OPEN_UNSAFE = {"os", "tarfile", "zipfile", "shelve", "dbm", "webbrowser", "sqlite3", "tempfile"}
+PY_OPEN_KWARGS = {"mode", "encoding", "errors", "newline"}
 
 
-def _py_open_writes(args, keywords, mode_index):
-    """open(…) 이 읽기 전용으로 확실하면 False."""
-    if any(k.arg in ("opener", None) for k in keywords):
-        return True
-    mode = next((k.value for k in keywords if k.arg == "mode"), None)
-    if mode is None and len(args) > mode_index:
-        mode = args[mode_index]
-    if any(isinstance(a, ast.Starred) for a in args):
-        return True
-    if mode is None:
-        return False
-    if not (isinstance(mode, ast.Constant) and isinstance(mode.value, str)):
-        return True  # 모드가 변수다
-    return bool(PY_WRITE_MODE & set(mode.value))
+def _py_modes_write(args, keywords):
+    """open 류의 모드 자리(위치 인자 · mode=)가 읽기 전용으로 확실하지 않으면 True. 정수 플래그 · 변수도 True."""
+    if any(k.arg not in PY_OPEN_KWARGS for k in keywords):
+        return True  # opener= · closefd= · **kw
+    vals = list(args) + [k.value for k in keywords if k.arg == "mode"]
+    for v in vals:
+        if not (isinstance(v, ast.Constant) and isinstance(v.value, str)):
+            return True  # 변수 · 정수 플래그(os.O_WRONLY) · *args
+        if PY_WRITE_MODE & set(v.value):
+            return True
+    return False
 
 
 def python_may_write(code):
+    """읽기로 확실한 것만 False. 모르는 호출 · 별칭 · 값으로 넘긴 함수 · 동적 접근은 True."""
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError):
         return True
+    alias = {}  # 이 코드 안의 import 이름 → 모듈.이름
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for al in node.names:
+                if al.asname:
+                    alias[al.asname] = al.name
+                else:
+                    alias[al.name.split(".")[0]] = al.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom):
+            if node.level or not node.module:
+                return True
+            for al in node.names:
+                if al.name == "*":
+                    return True
+                alias[al.asname or al.name] = f"{node.module}.{al.name}"
+    parent = {}
+    for node in ast.walk(tree):
+        for ch in ast.iter_child_nodes(node):
+            parent[ch] = node
+
+    def dotted(n):
+        """import 별칭에서 시작하는 속성 사슬이면 풀린 이름. 아니면 None."""
+        parts = []
+        while isinstance(n, ast.Attribute):
+            parts.append(n.attr)
+            n = n.value
+        if isinstance(n, ast.Name) and n.id in alias:
+            return ".".join([alias[n.id]] + parts[::-1])
+        return None
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id in PY_DYNAMIC:
             return True
         if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
             return True
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            # 안전 목록의 이름을 다른 함수로 바꿔치기 못 하게 한다(from os import remove as print)
-            for al in node.names:
-                if (al.asname or al.name) in PY_SAFE_FUNCS and al.name not in ("Path", "PurePath", "PosixPath", "WindowsPath"):
-                    return True
-        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr, ast.For, ast.With,
-                             ast.FunctionDef, ast.ClassDef, ast.Lambda, ast.comprehension)):
-            names = []
-            if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-                names.append(node.name)
-            if isinstance(node, ast.Lambda):
-                names += [a.arg for a in node.args.args]
-            for t in ([node.target] if hasattr(node, "target") else []) + list(getattr(node, "targets", [])) \
-                    + [i.optional_vars for i in getattr(node, "items", []) if i.optional_vars is not None]:
-                for sub in ast.walk(t):
-                    if isinstance(sub, ast.Name):
-                        names.append(sub.id)
-                    elif isinstance(sub, ast.Attribute):
-                        names.append(sub.attr)
-            if any(n in PY_SAFE_FUNCS or n in PY_SAFE_METHODS for n in names):
+        if isinstance(node, (ast.Starred, ast.Global, ast.Nonlocal)):
+            return True
+        # 이름 바꿔치기: 안전 목록 · import 별칭 이름에 다른 것을 넣거나, 모듈 속성에 대입하면 묻는다
+        if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(getattr(node, "ctx", None), (ast.Store, ast.Del)):
+            name = node.id if isinstance(node, ast.Name) else node.attr
+            if name in PY_SAFE_FUNCS or name in PY_SAFE_METHODS or name in alias \
+                    or (isinstance(node, ast.Attribute) and dotted(node.value)):
                 return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and \
+                (node.name in PY_SAFE_FUNCS or node.name in PY_SAFE_METHODS or node.name in alias):
+            return True
+        if isinstance(node, ast.arg) and (node.arg in PY_SAFE_FUNCS or node.arg in alias):
+            return True
+        # 모듈에서 꺼낸 이름(속성 사슬 끝 · from 으로 받은 이름)은 부르든 값으로 넘기든 안전 목록에 있어야 한다
+        p = parent.get(node)
+        outer = isinstance(node, (ast.Attribute, ast.Name)) and not (isinstance(p, ast.Attribute) and p.value is node)
+        if outer and isinstance(getattr(node, "ctx", None), ast.Load):
+            q = dotted(node)
+            if q is not None:
+                called = isinstance(p, ast.Call) and p.func is node
+                ok = (q in PY_SAFE_QUALIFIED or q in PY_OPEN_QUALIFIED) if called else (q in PY_SAFE_ATTRS or q in PY_SAFE_QUALIFIED)
+                if not ok:
+                    return True
         if not isinstance(node, ast.Call):
             continue
         f = node.func
+        q = dotted(f)
+        if q is not None:
+            if q in PY_OPEN_QUALIFIED and _py_modes_write(node.args[1:], node.keywords):
+                return True
+            continue  # 이름 검사는 위에서 했다
         if isinstance(f, ast.Name):
             if f.id not in PY_SAFE_FUNCS:
                 return True
-            if f.id == "open" and _py_open_writes(node.args, node.keywords, 1):
+            if f.id == "open" and _py_modes_write(node.args[1:], node.keywords):
                 return True
         elif isinstance(f, ast.Attribute):
-            owner = f.value.id if isinstance(f.value, ast.Name) else None
-            if f.attr == "open":
-                if owner in PY_OPEN_UNSAFE:
-                    return True
-                if _py_open_writes(node.args, node.keywords, 1 if owner in PY_OPEN_MODE2 else 0):
+            if f.attr == "open":  # Path(...).open(mode) 같은 메서드: 모든 인자가 모드 자리
+                if _py_modes_write(node.args, node.keywords):
                     return True
             elif f.attr == "replace":
-                if len(node.args) < 2:  # Path.replace(target) 는 파일을 옮긴다. str.replace(a, b) 는 글만 바꾼다
+                # str.replace 만 안전: 받는 쪽이 문자열 리터럴일 때만. os.replace · Path.replace 는 파일을 옮긴다
+                if not (isinstance(f.value, ast.Constant) and isinstance(f.value.value, str)):
                     return True
             elif f.attr not in PY_SAFE_METHODS:
                 return True
         else:
             return True  # d['f']() · (lambda: …)() 처럼 무엇을 부르는지 모른다
+        if any(k.arg is None for k in node.keywords):
+            return True
+    # 모듈 함수를 값으로 넘기는 것(map(os.remove, …))은 위의 「모듈에서 꺼낸 이름」 검사가 막는다.
     return False
 
 
-PERL_WRITE = re.compile(r"\b(?:unlink|rename|rmdir|mkdir|truncate|chmod|chown|utime|link|symlink|system|exec|eval|"
+PERL_WRITE = re.compile(r"\$\^I|\b(?:BEGIN|END|INIT|CHECK|unlink|rename|rmdir|mkdir|truncate|chmod|chown|utime|link|symlink|system|exec|eval|"
                         r"qx|sysopen|do|require|syscall|fork|kill|File::\w+|copy|move)\b|`")
 PERL_OPEN = re.compile(r"\bopen\s*\(?\s*(?:my\s+)?[$\w]+\s*,\s*(['\"])(.*?)\1(\s*,)?")
 NODE_WRITE = re.compile(
     r"\b(?:write\w*|append\w*|unlink\w*|rm|rmSync|rmdir\w*|rename\w*|copy\w*|cp|cpSync|mkdir\w*|mkdtemp\w*|"
     r"truncate\w*|symlink\w*|link|linkSync|chmod\w*|chown\w*|utimes\w*|open|openSync|createWriteStream|"
-    r"child_process|exec\w*|spawn\w*|fork|eval|Function|import|process\.binding|vm)\b|\brequire\s*\(\s*[^'\"\s]|`")
+    r"child_process|exec\w*|spawn\w*|fork|eval|Function|import|process\.binding|vm|globalThis|constructor)\b"
+    r"|\brequire\s*\(\s*[^'\"\s]|`|[\w)\]]\s*\[|\\[xu0-7]")
 RUBY_WRITE = re.compile(
     r"\b(?:FileUtils|IO|Open3|Kernel|system|exec|spawn|eval|instance_eval|class_eval|send|public_send|"
-    r"syscall|fork|load|require)\b|%x|`|\bFile\.(?:write|binwrite|delete|unlink|rename|truncate|symlink|link|"
+    r"syscall|fork|load|require|reopen|method|__send__|const_get|instance_variable_get)\b|%x|`|\bFile\.(?:write|binwrite|delete|unlink|rename|truncate|symlink|link|"
     r"chmod|chown|utime|new|mkfifo)\b|\bDir\.(?:mkdir|rmdir|delete|unlink)\b|\.(?:write|syswrite|truncate)\b")
 RUBY_OPEN = re.compile(r"\b(?:File\.)?open\s*\(?\s*(['\"])(.*?)\1\s*(?:,\s*(['\"])(.*?)\3)?\s*([,)]?)")
 

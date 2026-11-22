@@ -254,6 +254,7 @@ $env:HARNESS_YES='1'; irm https://raw.githubusercontent.com/jjun0214z/harness-te
 | 고친 뒤 할 일 | 파일을 고친 뒤 | `harness.json` 이면 생성기, 훅 · 플러그인이면 점검(doctor)을 알린다 |
 
 push 가드와 규칙 보호는 같은 명령 해석기(`shellwords.py`)를 쓴다. `cd X &&` · `sh -c '…'` · `$(…)` · heredoc 을 풀어서 본다.
+한 줄 코드(`python3 -c` · `perl/ruby/node -e`)는 읽기로 확실할 때만 묻지 않고, 쓸 수 있거나 애매하면 묻는다. 이 훅들은 실수 방지용이며 의도적 우회(경로를 글자 조합으로 만들기 · 스크립트 파일 실행 등)를 다 막지는 못한다.
 
 ## 🔧 설정
 

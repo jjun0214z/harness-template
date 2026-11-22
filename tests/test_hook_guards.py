@@ -134,6 +134,22 @@ class RuleGuard(Built):
         """node -e "require('fs').unlinkSync('harness.json')" """,
         """ruby -e "File.write('CLAUDE.md', 'x')" """,
         """ruby -e "File.open('CLAUDE.md', 'w') { |f| f << 'x' }" """,
+        # 검토에서 짚은 것: 옛 훅이 묻던 것을 놓치면 안 된다
+        "python3 - <<'EOF'\nimport os\nos.replace('CLAUDE.md', 'x.md')\nEOF",
+        "python3 - <<'EOF'\nimport sys\nsys.modules['os'].replace('CLAUDE.md', 'x.md')\nEOF",
+        """python3 -c "import os as o;o.open('CLAUDE.md', 0x401)" """,
+        """python3 -c "import wave;wave.open('CLAUDE.md', 'wb')" """,
+        """python3 -c "from pathlib import Path;Path('CLAUDE.md').open('w')" """,
+        """ruby -e '$stdout.reopen("CLAUDE.md", "w"); puts 1'""",
+        # 원래 있던 구멍 중 값싼 것
+        """python3 -c "import os;list(map(os.remove, ['CLAUDE.md']))" """,
+        """python3 -c "import os;sorted(['CLAUDE.md'], key=os.remove)" """,
+        """python3 -c "import py_compile;py_compile.compile('CLAUDE.md')" """,
+        """python3 -c "import pickle;pickle.loads(open('harness.json','rb').read())" """,
+        """perl -pe 'BEGIN { $^I = "" } s/a/b/' CLAUDE.md""",
+        """node -e "require('fs')['writeFileSync']('CLAUDE.md', 'x')" """,
+        """ruby -e "File.method(:write).call('CLAUDE.md', 'x')" """,
+        """ruby -e "File.send(:write, 'CLAUDE.md', 'x')" """,
     )
 
     def test_inline_reads_quiet(self):
